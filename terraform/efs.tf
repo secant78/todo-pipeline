@@ -19,9 +19,9 @@ resource "aws_efs_file_system" "db" {
 # One EFS mount target per private subnet so any Fargate task can reach it
 # regardless of which AZ it lands in.
 resource "aws_efs_mount_target" "db" {
-  count           = length(aws_subnet.private)
+  count           = length(aws_subnet.public)
   file_system_id  = aws_efs_file_system.db.id
-  subnet_id       = aws_subnet.private[count.index].id
+  subnet_id       = aws_subnet.public[count.index].id
   security_groups = [aws_security_group.efs.id]
 }
 

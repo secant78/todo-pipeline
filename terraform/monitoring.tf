@@ -114,8 +114,11 @@ resource "aws_cloudwatch_dashboard" "main" {
       {
         type = "metric"
         properties = {
-          title  = "Backend CPU & Memory"
-          period = 60
+          title   = "Backend CPU & Memory"
+          region  = var.aws_region
+          period  = 60
+          view    = "timeSeries"
+          stacked = false
           metrics = [
             ["ECS/ContainerInsights", "CpuUtilized", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.backend.name],
             ["ECS/ContainerInsights", "MemoryUtilized", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.backend.name],
@@ -125,8 +128,11 @@ resource "aws_cloudwatch_dashboard" "main" {
       {
         type = "metric"
         properties = {
-          title  = "ALB Request Count & 5xx Errors"
-          period = 60
+          title   = "ALB Request Count & 5xx Errors"
+          region  = var.aws_region
+          period  = 60
+          view    = "timeSeries"
+          stacked = false
           metrics = [
             ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", aws_lb.main.arn_suffix],
             ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", aws_lb.main.arn_suffix],
@@ -136,10 +142,10 @@ resource "aws_cloudwatch_dashboard" "main" {
       {
         type = "log"
         properties = {
-          title   = "Backend Logs (last 20 lines)"
-          query   = "SOURCE '${aws_cloudwatch_log_group.backend.name}' | fields @timestamp, @message | sort @timestamp desc | limit 20"
-          region  = var.aws_region
-          view    = "table"
+          title  = "Backend Logs (last 20 lines)"
+          query  = "SOURCE '${aws_cloudwatch_log_group.backend.name}' | fields @timestamp, @message | sort @timestamp desc | limit 20"
+          region = var.aws_region
+          view   = "table"
         }
       }
     ]

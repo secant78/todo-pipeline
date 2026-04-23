@@ -122,8 +122,9 @@ resource "aws_ecs_service" "backend" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets         = aws_subnet.private[*].id
-    security_groups = [aws_security_group.backend.id]
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.backend.id]
+    assign_public_ip = true
   }
 
   load_balancer {
@@ -138,7 +139,7 @@ resource "aws_ecs_service" "backend" {
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
 
-  depends_on = [aws_lb_listener.http, aws_efs_mount_target.db]
+  depends_on = [aws_lb_listener.http, aws_efs_mount_target.db[0]]
   tags       = local.common_tags
 }
 
@@ -150,8 +151,9 @@ resource "aws_ecs_service" "frontend" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets         = aws_subnet.private[*].id
-    security_groups = [aws_security_group.frontend.id]
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.frontend.id]
+    assign_public_ip = true
   }
 
   load_balancer {
