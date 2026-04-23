@@ -7,4 +7,4 @@ __pycache__/
 *.pyc
 node_modules/
 frontend/build/
-rotator.zip
+# rotator.zip is generated from committed source — include it so CI can find it
