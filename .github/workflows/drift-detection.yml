@@ -1,0 +1,83 @@
+name: Infrastructure Drift Detection
+
+# Runs every Monday at 06:00 UTC and can also be triggered manually.
+# Detects when someone has made a manual change in the AWS console that
+# diverges from what Terraform state expects.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  drift:
+    name: Terraform plan — ${{ matrix.workspace }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      # Check all three environments even if one drifted, so we get a full
+      # picture rather than stopping at the first detected change.
+      fail-fast: false
+      matrix:
+        workspace: [dev, staging, prod]
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-${{ matrix.workspace }}-github-actions
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
+        with:
+          terraform_version: "1.8.0"
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Select workspace
+        working-directory: terraform
+        run: terraform workspace select ${{ matrix.workspace }}
+
+      # -detailed-exitcode returns exit code 2 when there are changes, 0 when
+      # there are none. We capture this to decide whether to alert.
+      - name: Terraform plan (drift check)
+        id: plan
+        working-directory: terraform
+        run: |
+          set +e
+          terraform plan \
+            -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
+            -var="backend_image_tag=drift-check" \
+            -var="frontend_image_tag=drift-check" \
+            -detailed-exitcode \
+            -out=drift-plan.tfplan \
+            2>&1 | tee plan-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+          exit 0  # don't fail the step — we handle it below
+
+      - name: Upload plan output as artifact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: drift-plan-${{ matrix.workspace }}
+          path: |
+            terraform/plan-output.txt
+            terraform/drift-plan.tfplan
+          retention-days: 7
+
+      # Alert via Slack when drift is detected (exit code 2 = changes exist)
+      - name: Notify on drift
+        if: steps.plan.outputs.exit_code == '2'
+        run: |
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H "Content-type: application/json" \
+            -d '{
+              "text": "⚠️ *Infrastructure drift detected* in `${{ matrix.workspace }}`.\nSomeone may have made a manual change in the AWS console.\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View full plan>"
+            }'

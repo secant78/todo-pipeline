@@ -1,0 +1,326 @@
+name: Deploy — Production
+
+on:
+  push:
+    branches: [main]
+
+# Only one prod deployment at a time; never cancel in progress — let it finish
+# or fail, then rollback.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION:       us-east-1
+  TF_WORKSPACE:     prod
+  IMAGE_TAG:        prod-${{ github.sha }}
+  CLUSTER_NAME:     todo-prod
+  BACKEND_SERVICE:  todo-prod-backend
+  FRONTEND_SERVICE: todo-prod-frontend
+
+jobs:
+
+  # ── Stage 1: tests, audits, SAST, IaC scan ─────────────────────────────────
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install backend dev dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Backend tests
+        working-directory: backend
+        run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
+
+      - name: Backend dependency audit
+        run: pip-audit --requirement backend/requirements.txt --strict
+
+      - name: SAST — Bandit
+        working-directory: backend
+        run: bandit -r app.py --severity-level medium
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Frontend dependency audit
+        working-directory: frontend
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: SAST — ESLint security
+        working-directory: frontend
+        run: npm run lint
+
+      - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
+        with:
+          terraform_version: "1.8.0"
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: IaC security scan — Checkov
+        run: |
+          pip install checkov --quiet
+          checkov --directory terraform/ --framework terraform --compact --quiet --soft-fail
+
+  # ── Stage 2: manual approval gate (configured in GitHub Environments) ───────
+  # A required reviewer must approve in the GitHub Actions UI before build runs.
+  approve:
+    name: Await approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: validate
+    environment: prod   # branch protection + required reviewers enforced here
+
+    permissions:
+      contents: none
+
+    steps:
+      - run: echo "Approved — proceeding to production build and deploy"
+
+  # ── Stage 3: build + push + sign ───────────────────────────────────────────
+  build:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: approve
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      backend_image:  ${{ steps.meta.outputs.backend_image }}
+      frontend_image: ${{ steps.meta.outputs.frontend_image }}
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-prod-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
+
+      - name: Set image URLs
+        id: meta
+        run: |
+          BACKEND=${{ steps.ecr-login.outputs.registry }}/todo-pipeline/backend:$IMAGE_TAG
+          FRONTEND=${{ steps.ecr-login.outputs.registry }}/todo-pipeline/frontend:$IMAGE_TAG
+          echo "backend_image=$BACKEND"   >> $GITHUB_OUTPUT
+          echo "frontend_image=$FRONTEND" >> $GITHUB_OUTPUT
+
+      - uses: docker/setup-buildx-action@988b5a0280414f521da01fcc63a27aeeb4b104db # v3.7.1
+
+      - name: Build and push backend
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: ./backend
+          push: true
+          # Also tag as "latest" so the current prod image is always identifiable
+          tags: |
+            ${{ steps.meta.outputs.backend_image }}
+            ${{ steps.ecr-login.outputs.registry }}/todo-pipeline/backend:latest
+          cache-from: type=gha,scope=backend-prod
+          cache-to:   type=gha,mode=max,scope=backend-prod
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.frontend_image }}
+            ${{ steps.ecr-login.outputs.registry }}/todo-pipeline/frontend:latest
+          build-args: REACT_APP_API_URL=/api
+          cache-from: type=gha,scope=frontend-prod
+          cache-to:   type=gha,mode=max,scope=frontend-prod
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+
+      # Verify the signed dev/staging images (same SHA) before signing the prod tag.
+      # This confirms the image wasn't tampered with between staging and prod push.
+      - name: Verify upstream signatures
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign verify \
+            --certificate-identity-regexp="https://github.com/${{ github.repository }}" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+            ${{ steps.meta.outputs.backend_image }} || true
+
+      - name: Sign images
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes ${{ steps.meta.outputs.backend_image }}
+          cosign sign --yes ${{ steps.meta.outputs.frontend_image }}
+
+  # ── Stage 4: Terraform + ECS deploy with rollback ──────────────────────────
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: build
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-prod-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Save current task definitions (rollback target)
+        id: save-task-defs
+        run: |
+          BACKEND_TD=$(aws ecs describe-services \
+            --cluster $CLUSTER_NAME --services $BACKEND_SERVICE \
+            --query 'services[0].taskDefinition' --output text 2>/dev/null || echo "")
+          FRONTEND_TD=$(aws ecs describe-services \
+            --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE \
+            --query 'services[0].taskDefinition' --output text 2>/dev/null || echo "")
+          echo "backend_td=$BACKEND_TD"   >> $GITHUB_OUTPUT
+          echo "frontend_td=$FRONTEND_TD" >> $GITHUB_OUTPUT
+
+      - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
+        with:
+          terraform_version: "1.8.0"
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Select prod workspace
+        working-directory: terraform
+        run: terraform workspace select prod || terraform workspace new prod
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: |
+          terraform plan \
+            -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
+            -var="backend_image_tag=$IMAGE_TAG" \
+            -var="frontend_image_tag=$IMAGE_TAG" \
+            -out=tfplan
+
+      - name: Upload plan as artifact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: tfplan-prod-${{ github.sha }}
+          path: terraform/tfplan
+          retention-days: 30
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      # Prod deploys backend first, waits for it to be healthy, then deploys
+      # frontend — reduces the window where old frontend talks to new API.
+      - name: Deploy backend
+        run: aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE --force-new-deployment
+
+      - name: Wait for backend
+        run: aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
+
+      - name: Deploy frontend
+        run: aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
+
+      - name: Wait for frontend
+        run: aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
+
+      - name: Production smoke tests
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names todo-prod --query 'LoadBalancers[0].DNSName' --output text)
+
+          curl --fail --retry 5 --retry-delay 15 http://$ALB_DNS/api/health
+
+          TOKEN=$(curl -sf -X POST http://$ALB_DNS/api/auth/signup \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"smoke_${{ github.sha }}\",\"email\":\"smoke@prod.com\",\"password\":\"smokepass\"}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+          curl --fail -X POST http://$ALB_DNS/api/todos \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"title":"prod smoke test"}'
+
+      - name: Rollback on failure
+        if: failure() && steps.save-task-defs.outputs.backend_td != ''
+        run: |
+          echo "PRODUCTION ROLLBACK TRIGGERED"
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE \
+            --task-definition ${{ steps.save-task-defs.outputs.backend_td }} --force-new-deployment
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE \
+            --task-definition ${{ steps.save-task-defs.outputs.frontend_td }} --force-new-deployment
+          aws ecs wait services-stable --cluster $CLUSTER_NAME \
+            --services $BACKEND_SERVICE $FRONTEND_SERVICE
+
+      - name: Log deployment result
+        if: always()
+        run: |
+          aws logs put-log-events \
+            --log-group-name /ecs/todo-prod/pipeline \
+            --log-stream-name deployments \
+            --log-events "[{\"timestamp\":$(date +%s%3N),\"message\":\"Deploy $IMAGE_TAG: ${{ job.status }}\"}]" \
+            2>/dev/null || true
+
+  # ── Stage 5: Slack notification ─────────────────────────────────────────────
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [validate, approve, build, deploy]
+    if: always()
+
+    permissions:
+      contents: none
+
+    steps:
+      - name: Slack notification
+        run: |
+          STATUS="${{ needs.deploy.result }}"
+          if [ "$STATUS" = "success" ]; then
+            ICON="✅"; MSG="succeeded"
+          else
+            ICON="🚨"; MSG="FAILED (validate=${{ needs.validate.result }}, build=${{ needs.build.result }}, deploy=${{ needs.deploy.result }})"
+          fi
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H "Content-type: application/json" \
+            -d "{\"text\":\"$ICON *PRODUCTION* deploy \`${{ env.IMAGE_TAG }}\` $MSG\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\"}"

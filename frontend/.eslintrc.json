@@ -1,0 +1,10 @@
+{
+  "extends": ["react-app", "plugin:security/recommended"],
+  "plugins": ["security"],
+  "rules": {
+    "security/detect-object-injection": "warn",
+    "security/detect-non-literal-regexp": "warn",
+    "no-eval": "error",
+    "no-implied-eval": "error"
+  }
+}

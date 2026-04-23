@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # Keeps GitHub Actions SHA-pinned to their latest releases automatically.
+  # Dependabot opens a PR with the new SHA whenever an action cuts a release.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+
+  # Python backend dependencies
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps(backend)"
+
+  # React frontend dependencies
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps(frontend)"

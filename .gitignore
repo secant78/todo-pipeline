@@ -1,0 +1,10 @@
+.env
+*.tfstate
+*.tfstate.backup
+.terraform/
+tfplan
+__pycache__/
+*.pyc
+node_modules/
+frontend/build/
+rotator.zip
