@@ -44,14 +44,14 @@ jobs:
 
       - name: Backend tests
         working-directory: backend
-        run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
+        run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
 
-      - name: Backend dependency audit
-        run: pip-audit --requirement backend/requirements.txt --strict
-
-      - name: SAST — Bandit
-        working-directory: backend
-        run: bandit -r app.py --severity-level medium
+      - name: Snyk — Python dependency scan
+        uses: snyk/actions/python-3.10@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --file=backend/requirements.txt
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -67,9 +67,12 @@ jobs:
         working-directory: frontend
         run: npm test
 
-      - name: Frontend dependency audit
-        working-directory: frontend
-        run: npm audit --audit-level=high --omit=dev
+      - name: Snyk — npm dependency scan
+        uses: snyk/actions/node@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --file=frontend/package.json
 
       - name: SAST — ESLint security
         working-directory: frontend
@@ -85,10 +88,18 @@ jobs:
           terraform init -backend=false
           terraform validate
 
-      - name: IaC security scan — Checkov
-        run: |
-          pip install checkov --quiet
-          checkov --directory terraform/ --framework terraform --compact --quiet --soft-fail
+      - name: tfsec — Terraform security scan
+        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
+        with:
+          working_directory: terraform
+          soft_fail: true
+
+      - name: Checkov — IaC security scan
+        uses: bridgecrewio/checkov-action@e9cd879593ec52aa7c88bfa9cde0dce5c3c34e37 # v12.2890.0
+        with:
+          directory: terraform/
+          framework: terraform
+          soft_fail: true
 
   # ── Stage 2: build images with layer caching, sign with Cosign ─────────────
   build:

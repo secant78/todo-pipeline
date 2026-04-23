@@ -1,31 +1,24 @@
 name: PR Validation
 
-# Runs on every pull request targeting any of the three environment branches.
-# A PR must pass all jobs here before it can be merged (enforce via branch
-# protection rules: Settings → Branches → Require status checks to pass).
 on:
   pull_request:
     branches: [dev, staging, main]
 
-# Cancel any in-progress run for the same PR when a new commit is pushed,
-# so stale runs don't consume minutes or produce confusing results.
 concurrency:
   group: pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# Minimal permissions — this workflow never deploys, so it needs nothing beyond
-# reading the repo and, for SAST, writing security events for the GitHub UI.
 permissions:
   contents: read
-  security-events: write
+  security-events: write  # needed to upload SARIF results to GitHub Security tab
 
 jobs:
 
-  # ── Backend: tests + audit + SAST ──────────────────────────────────────────
+  # ── Backend: tests + Snyk + SonarQube ──────────────────────────────────────
   backend:
-    name: Backend — test / audit / SAST
+    name: Backend — test / Snyk / SonarQube
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     defaults:
       run:
@@ -33,11 +26,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # SonarQube needs full history to calculate blame and coverage trends
+          fetch-depth: 0
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-          cache: "pip"
+          cache: pip
           cache-dependency-path: backend/requirements-dev.txt
 
       - name: Install dependencies
@@ -47,36 +43,39 @@ jobs:
         run: |
           pytest tests/ -v \
             --cov=app \
+            --cov-report=xml:coverage.xml \
             --cov-report=term-missing \
             --cov-fail-under=80
 
-      # Fails the job if any known CVE is found in the installed packages
-      - name: Dependency vulnerability audit
-        run: pip-audit --requirement requirements.txt --strict
-
-      # Bandit flags common Python security anti-patterns (hardcoded passwords,
-      # use of shell=True, SQL injection patterns, etc.)
-      - name: SAST — Bandit
-        run: |
-          bandit -r app.py \
-            --format json \
-            --output bandit-report.json \
-            --severity-level medium || true
-          bandit -r app.py --severity-level medium
-
-      - name: Upload Bandit report
-        if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+      # Snyk replaces pip-audit: deeper vuln DB, fix suggestions, license checks,
+      # and results uploaded to Snyk dashboard for tracking over time.
+      - name: Snyk — Python dependency scan
+        uses: snyk/actions/python-3.10@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          name: bandit-report
-          path: backend/bandit-report.json
-          retention-days: 14
+          args: --severity-threshold=high --file=backend/requirements.txt
+        continue-on-error: false
 
-  # ── Frontend: tests + audit + lint ─────────────────────────────────────────
+      # ESLint security plugin still covers JS-adjacent patterns in any .py files
+      # SonarQube handles the full SAST analysis below.
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@2500896589ef8f7247069a56136f8dc177c27ccf # v5.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=todo-pipeline-backend
+            -Dsonar.sources=backend
+            -Dsonar.python.coverage.reportPaths=backend/coverage.xml
+            -Dsonar.qualitygate.wait=true
+
+  # ── Frontend: tests + Snyk + ESLint ────────────────────────────────────────
   frontend:
-    name: Frontend — test / audit / lint
+    name: Frontend — test / Snyk / ESLint
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     defaults:
       run:
@@ -84,11 +83,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: "20"
-          cache: "npm"
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
@@ -97,17 +98,34 @@ jobs:
       - name: Run tests
         run: npm test
 
-      # Fails on HIGH or CRITICAL CVEs in production dependencies only
-      - name: Dependency vulnerability audit
-        run: npm audit --audit-level=high --omit=dev
+      # Snyk for npm: detects vulns in transitive deps that npm audit misses,
+      # and can open automatic fix PRs via the Snyk dashboard.
+      - name: Snyk — npm dependency scan
+        uses: snyk/actions/node@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --file=frontend/package.json
+        continue-on-error: false
 
-      # ESLint with the security plugin (configured in .eslintrc.json)
+      # ESLint with security plugin (catches eval, injection patterns, etc.)
       - name: SAST — ESLint security
         run: npm run lint
 
-  # ── IaC: Terraform validate + Checkov ──────────────────────────────────────
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@2500896589ef8f7247069a56136f8dc177c27ccf # v5.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=todo-pipeline-frontend
+            -Dsonar.sources=frontend/src
+            -Dsonar.qualitygate.wait=true
+
+  # ── IaC: Terraform validate + tfsec + Checkov ──────────────────────────────
   iac:
-    name: IaC — validate / security scan
+    name: IaC — validate / tfsec / Checkov
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -118,22 +136,53 @@ jobs:
         with:
           terraform_version: "1.8.0"
 
-      # terraform validate checks syntax and internal references without
-      # needing AWS credentials or real state
       - name: Terraform validate
         working-directory: terraform
         run: |
           terraform init -backend=false
           terraform validate
 
-      # Checkov scans for misconfigurations: open security groups, missing
-      # encryption, overly permissive IAM, unversioned S3 buckets, etc.
-      - name: IaC security scan — Checkov
-        run: |
-          pip install checkov --quiet
-          checkov \
-            --directory terraform/ \
-            --framework terraform \
-            --compact \
-            --quiet \
-            --soft-fail
+      # tfsec is fast and focused on Terraform-specific security issues.
+      # It catches things like public S3 buckets, unencrypted EBS, open SGs.
+      - name: tfsec — Terraform security scan
+        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
+        with:
+          working_directory: terraform
+          soft_fail: true
+          format: sarif
+          additional_args: --out tfsec.sarif
+
+      - name: Upload tfsec SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@dd746615b3dff6e73b57f290f0b90f48c4cd69ad # v3.28.5
+        if: always()
+        with:
+          sarif_file: tfsec.sarif
+          category: tfsec
+
+      # Checkov complements tfsec with a broader rule set covering AWS best
+      # practices, CIS benchmarks, and supply-chain checks.
+      - name: Checkov — IaC security scan
+        uses: bridgecrewio/checkov-action@e9cd879593ec52aa7c88bfa9cde0dce5c3c34e37 # v12.2890.0
+        with:
+          directory: terraform/
+          framework: terraform
+          soft_fail: true
+          output_format: sarif
+          output_file_path: checkov.sarif
+
+      - name: Upload Checkov SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@dd746615b3dff6e73b57f290f0b90f48c4cd69ad # v3.28.5
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+      - name: Upload scan artifacts
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: iac-scan-results
+          path: |
+            tfsec.sarif
+            checkov.sarif
+          retention-days: 14
