@@ -72,12 +72,13 @@ jobs:
             terraform/drift-plan.tfplan
           retention-days: 7
 
-      # Alert via Slack when drift is detected (exit code 2 = changes exist)
+      # Alert via email when drift is detected (exit code 2 = changes exist)
       - name: Notify on drift
         if: steps.plan.outputs.exit_code == '2'
         run: |
-          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
-            -H "Content-type: application/json" \
-            -d '{
-              "text": "⚠️ *Infrastructure drift detected* in `${{ matrix.workspace }}`.\nSomeone may have made a manual change in the AWS console.\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View full plan>"
-            }'
+          aws ses send-email \
+            --from "${{ secrets.NOTIFY_FROM_EMAIL }}" \
+            --to "${{ secrets.NOTIFY_TO_EMAIL }}" \
+            --subject "⚠️ Infrastructure drift detected in ${{ matrix.workspace }}" \
+            --text "Terraform detected infrastructure drift in the ${{ matrix.workspace }} environment. Someone may have made a manual change in the AWS console.\n\nView the full plan: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --region us-east-1

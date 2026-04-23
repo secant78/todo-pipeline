@@ -149,6 +149,12 @@ resource "aws_iam_role_policy" "github_actions" {
         Action   = ["iam:PassRole"]
         Resource = [aws_iam_role.ecs_execution.arn, aws_iam_role.ecs_task.arn]
       },
+      {
+        # SES is used by the pipeline's notify job to send deployment emails
+        Effect   = "Allow"
+        Action   = ["ses:SendEmail", "ses:SendRawEmail"]
+        Resource = "*"
+      },
     ]
   })
 }

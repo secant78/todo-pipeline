@@ -301,7 +301,7 @@ jobs:
             --log-events "[{\"timestamp\":$(date +%s%3N),\"message\":\"Deploy $IMAGE_TAG: ${{ job.status }}\"}]" \
             2>/dev/null || true
 
-  # ── Stage 5: Slack notification ─────────────────────────────────────────────
+  # ── Stage 5: Email notification via AWS SES (always runs) ───────────────────
   notify:
     name: Notify
     runs-on: ubuntu-latest
@@ -310,17 +310,28 @@ jobs:
     if: always()
 
     permissions:
+      id-token: write
       contents: none
 
     steps:
-      - name: Slack notification
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-prod-github-actions
+          aws-region: us-east-1
+
+      - name: Send email notification
         run: |
           STATUS="${{ needs.deploy.result }}"
           if [ "$STATUS" = "success" ]; then
-            ICON="✅"; MSG="succeeded"
+            SUBJECT="✅ [PRODUCTION] Deploy succeeded — ${{ env.IMAGE_TAG }}"
+            BODY="The production deployment completed successfully.\n\nCommit: ${{ github.sha }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           else
-            ICON="🚨"; MSG="FAILED (validate=${{ needs.validate.result }}, build=${{ needs.build.result }}, deploy=${{ needs.deploy.result }})"
+            SUBJECT="🚨 [PRODUCTION] Deploy FAILED — ${{ env.IMAGE_TAG }}"
+            BODY="The PRODUCTION deployment failed — check immediately.\n\nStages: validate=${{ needs.validate.result }}, build=${{ needs.build.result }}, deploy=${{ needs.deploy.result }}\n\nCommit: ${{ github.sha }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           fi
-          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
-            -H "Content-type: application/json" \
-            -d "{\"text\":\"$ICON *PRODUCTION* deploy \`${{ env.IMAGE_TAG }}\` $MSG\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\"}"
+          aws ses send-email \
+            --from "${{ secrets.NOTIFY_FROM_EMAIL }}" \
+            --to "${{ secrets.NOTIFY_TO_EMAIL }}" \
+            --subject "$SUBJECT" \
+            --text "$BODY" \
+            --region us-east-1
