@@ -61,7 +61,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
-          terraform_version: "1.8.0"
+          terraform_version: "1.11.0"
 
       - name: Terraform validate
         working-directory: terraform/stack
@@ -168,17 +168,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
-          terraform_version: "1.8.0"
-
-      - name: Release any stale Terraform state lock
-        run: |
-          for KEY in \
-            "todo-pipeline-tfstate/env:/dev/stack/terraform.tfstate" \
-            "todo-pipeline-tfstate/env:/dev/stack/terraform.tfstate-md5"; do
-            aws dynamodb delete-item \
-              --table-name todo-pipeline-tflock \
-              --key "{\"LockID\":{\"S\":\"${KEY}\"}}" 2>/dev/null || true
-          done
+          terraform_version: "1.11.0"
 
       - name: Terraform init
         working-directory: terraform/stack
