@@ -49,14 +49,14 @@ jobs:
 
       - name: Install backend dependencies for Snyk
         working-directory: ${{ github.workspace }}
-        run: pip install -r todo-pipeline/backend/requirements.txt
+        run: pip install -r backend/requirements.txt
 
       - name: Snyk — Python dependency scan
         uses: snyk/actions/python-3.10@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          args: --severity-threshold=high --file=todo-pipeline/backend/requirements.txt
+          args: --severity-threshold=high --file=backend/requirements.txt
         continue-on-error: false
 
       # ESLint security plugin still covers JS-adjacent patterns in any .py files
