@@ -11,4 +11,7 @@ variable "availability_zones" { type = list(string) }
 variable "github_repo"            { type = string }
 variable "github_branch"          { type = string }
 variable "deployment_config_name" { type = string }
-variable "single_nat_gateway"     { type = bool; default = false }
+variable "single_nat_gateway" {
+  type    = bool
+  default = false
+}
