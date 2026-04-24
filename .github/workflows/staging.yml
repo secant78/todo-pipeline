@@ -75,6 +75,20 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@v4.0.0
+        with:
+          tflint_version: v0.54.0
+
+      - name: tflint init
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: tflint
+        run: tflint --recursive --minimum-failure-severity=error
+        working-directory: terraform
+
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
           terraform_version: "1.8.0"
@@ -96,6 +110,7 @@ jobs:
         with:
           directory: terraform/
           framework: terraform
+          config_file: .checkov.yaml
           soft_fail: true
 
   # ── Stage 2: build + push + sign ───────────────────────────────────────────

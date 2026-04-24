@@ -77,6 +77,20 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@v4.0.0
+        with:
+          tflint_version: v0.54.0
+
+      - name: tflint init
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: tflint
+        run: tflint --recursive --minimum-failure-severity=error
+        working-directory: terraform
+
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
           terraform_version: "1.8.0"
@@ -94,10 +108,11 @@ jobs:
           soft_fail: true
 
       - name: Checkov — IaC security scan
-        uses: bridgecrewio/checkov-action@master # Use @master or a stable tag like @v12.2890.0
+        uses: bridgecrewio/checkov-action@e9cd879593ec52aa7c88bfa9cde0dce5c3c34e37 # v12.2890.0
         with:
           directory: terraform/
           framework: terraform
+          config_file: .checkov.yaml
           soft_fail: true
 
   # ── Stage 2: build images with layer caching, sign with Cosign ─────────────

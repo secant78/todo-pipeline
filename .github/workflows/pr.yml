@@ -117,14 +117,30 @@ jobs:
             -Dsonar.sources=frontend/src
             -Dsonar.qualitygate.wait=true
 
-  # ── IaC: Terraform validate + tfsec + Checkov ──────────────────────────────
+  # ── IaC: tflint + Terraform validate + tfsec + Checkov ────────────────────
   iac:
-    name: IaC — validate / tfsec / Checkov
+    name: IaC — tflint / validate / tfsec / Checkov
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # tflint catches deprecated resources, invalid attribute values, and naming
+      # convention violations before Terraform even runs.
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@v4.0.0
+        with:
+          tflint_version: v0.54.0
+
+      - name: tflint init
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: tflint
+        run: tflint --recursive --minimum-failure-severity=error
+        working-directory: terraform
 
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
@@ -151,14 +167,14 @@ jobs:
           sarif_file: tfsec.sarif
           category: tfsec
 
-      # Checkov complements tfsec with a broader rule set covering AWS best
-      # practices, CIS benchmarks, and supply-chain checks.
+      # Checkov is the hard gate on PRs — soft_fail is intentionally absent.
+      # Accepted-risk suppressions are documented in .checkov.yaml.
       - name: Checkov — IaC security scan
         uses: bridgecrewio/checkov-action@e9cd879593ec52aa7c88bfa9cde0dce5c3c34e37 # v12.2890.0
         with:
           directory: terraform/
           framework: terraform
-          soft_fail: true
+          config_file: .checkov.yaml
           output_format: sarif
           output_file_path: checkov.sarif
 

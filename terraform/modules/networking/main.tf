@@ -14,9 +14,36 @@ resource "aws_subnet" "public" {
   tags                    = merge(var.common_tags, { Name = "todo-${var.env}-public-${count.index}" })
 }
 
+# Private subnets for ECS tasks and EFS mount targets.
+# CIDR offset +10 leaves room for future public subnets (e.g. NLB, bastion).
+resource "aws_subnet" "private" {
+  count             = length(var.availability_zones)
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = cidrsubnet(var.vpc_cidr, 8, count.index + 10)
+  availability_zone = var.availability_zones[count.index]
+  tags              = merge(var.common_tags, { Name = "todo-${var.env}-private-${count.index}" })
+}
+
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
   tags   = merge(var.common_tags, { Name = "todo-${var.env}-igw" })
+}
+
+# One Elastic IP and NAT gateway per AZ so private-subnet tasks survive an AZ
+# outage — if AZ-a's NAT fails, AZ-b tasks route through their own NAT gateway.
+resource "aws_eip" "nat" {
+  count      = length(var.availability_zones)
+  domain     = "vpc"
+  depends_on = [aws_internet_gateway.main]
+  tags       = merge(var.common_tags, { Name = "todo-${var.env}-nat-eip-${count.index}" })
+}
+
+resource "aws_nat_gateway" "main" {
+  count         = length(var.availability_zones)
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
+  tags          = merge(var.common_tags, { Name = "todo-${var.env}-nat-${count.index}" })
+  depends_on    = [aws_internet_gateway.main]
 }
 
 resource "aws_route_table" "public" {
@@ -28,10 +55,27 @@ resource "aws_route_table" "public" {
   tags = merge(var.common_tags, { Name = "todo-${var.env}-public-rt" })
 }
 
+# One private route table per AZ — each routes 0/0 through its own NAT gateway.
+resource "aws_route_table" "private" {
+  count  = length(var.availability_zones)
+  vpc_id = aws_vpc.main.id
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.main[count.index].id
+  }
+  tags = merge(var.common_tags, { Name = "todo-${var.env}-private-rt-${count.index}" })
+}
+
 resource "aws_route_table_association" "public" {
   count          = length(aws_subnet.public)
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "private" {
+  count          = length(aws_subnet.private)
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private[count.index].id
 }
 
 # ── Security groups ───────────────────────────────────────────────────────────

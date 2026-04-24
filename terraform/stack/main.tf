@@ -27,7 +27,7 @@ module "networking" {
 module "efs" {
   source      = "../modules/efs"
   env         = var.env
-  subnet_ids  = module.networking.public_subnet_ids
+  subnet_ids  = module.networking.private_subnet_ids
   efs_sg_id   = module.networking.efs_sg_id
   common_tags = local.common_tags
 }
@@ -56,7 +56,7 @@ module "ecs" {
   frontend_image_tag  = var.frontend_image_tag
   execution_role_arn  = module.iam.execution_role_arn
   task_role_arn       = module.iam.task_role_arn
-  subnet_ids          = module.networking.public_subnet_ids
+  subnet_ids          = module.networking.private_subnet_ids
   backend_sg_id       = module.networking.backend_sg_id
   frontend_sg_id      = module.networking.frontend_sg_id
   backend_tg_arn      = module.networking.backend_tg_arn
