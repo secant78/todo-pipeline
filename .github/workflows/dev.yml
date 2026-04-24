@@ -170,6 +170,16 @@ jobs:
         with:
           terraform_version: "1.8.0"
 
+      - name: Release any stale Terraform state lock
+        run: |
+          for KEY in \
+            "todo-pipeline-tfstate/env:/dev/stack/terraform.tfstate" \
+            "todo-pipeline-tfstate/env:/dev/stack/terraform.tfstate-md5"; do
+            aws dynamodb delete-item \
+              --table-name todo-pipeline-tflock \
+              --key "{\"LockID\":{\"S\":\"${KEY}\"}}" 2>/dev/null || true
+          done
+
       - name: Terraform init
         working-directory: terraform/stack
         run: |
