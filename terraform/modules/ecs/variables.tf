@@ -13,7 +13,5 @@ variable "backend_sg_id"        { type = string }
 variable "frontend_sg_id"       { type = string }
 variable "backend_tg_arn"       { type = string }
 variable "frontend_tg_arn"      { type = string }
-variable "efs_id"               { type = string }
-variable "efs_access_point_id"  { type = string }
 variable "jwt_secret_arn"       { type = string }
 variable "common_tags"          { type = map(string) }

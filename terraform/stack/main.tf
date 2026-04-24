@@ -24,14 +24,6 @@ module "networking" {
   common_tags        = local.common_tags
 }
 
-module "efs" {
-  source      = "../modules/efs"
-  env         = var.env
-  subnet_ids  = module.networking.private_subnet_ids
-  efs_sg_id   = module.networking.efs_sg_id
-  common_tags = local.common_tags
-}
-
 module "secrets" {
   source            = "../modules/secrets"
   env               = var.env
@@ -61,12 +53,10 @@ module "ecs" {
   frontend_sg_id      = module.networking.frontend_sg_id
   backend_tg_arn      = module.networking.backend_tg_arn
   frontend_tg_arn     = module.networking.frontend_tg_arn
-  efs_id              = module.efs.efs_id
-  efs_access_point_id = module.efs.access_point_id
   jwt_secret_arn      = module.secrets.jwt_secret_arn
   common_tags         = local.common_tags
 
-  depends_on = [module.secrets, module.efs]
+  depends_on = [module.secrets]
 }
 
 module "monitoring" {

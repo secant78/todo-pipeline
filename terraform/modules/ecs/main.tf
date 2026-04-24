@@ -23,31 +23,14 @@ resource "aws_ecs_task_definition" "backend" {
   execution_role_arn       = var.execution_role_arn
   task_role_arn            = var.task_role_arn
 
-  volume {
-    name = "sqlite-data"
-    efs_volume_configuration {
-      file_system_id     = var.efs_id
-      transit_encryption = "ENABLED"
-      authorization_config {
-        access_point_id = var.efs_access_point_id
-        iam             = "DISABLED"
-      }
-    }
-  }
-
   container_definitions = jsonencode([{
     name      = "backend"
     image     = local.backend_image
     essential = true
     portMappings = [{ containerPort = 5000, protocol = "tcp" }]
-    mountPoints = [{
-      sourceVolume  = "sqlite-data"
-      containerPath = "/data"
-      readOnly      = false
-    }]
     environment = [
       { name = "APP_ENV", value = var.env },
-      { name = "DB_PATH", value = "/data/todo.db" },
+      { name = "DB_PATH", value = "/tmp/todo.db" },
     ]
     secrets = [{
       name      = "JWT_SECRET_KEY"

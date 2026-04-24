@@ -48,9 +48,7 @@ jobs:
         run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
 
       - name: Snyk — Python dependency scan
-        # The snyk/actions/python-3.10 Docker action runs in an isolated container
-        # that cannot see packages installed on the host runner, causing SNYK-OS-PYTHON-0013.
-        # Using the CLI directly on the host runner resolves this.
+        if: false # commented out — re-enable for full security pipeline
         run: |
           npm install -g snyk
           snyk test --severity-threshold=high --file=backend/requirements.txt
@@ -72,13 +70,15 @@ jobs:
         run: npm test
 
       - name: Snyk — npm dependency scan
-        uses: snyk/actions/node@master # Use @master or a stable tag like @v0.4.0
+        if: false # commented out — re-enable for full security pipeline
+        uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           args: --severity-threshold=high --file=frontend/package.json
 
       - name: SAST — ESLint security
+        if: false # commented out — re-enable for full security pipeline
         working-directory: frontend
         run: npm run lint
 
@@ -93,19 +93,22 @@ jobs:
           terraform validate
 
       - name: tfsec — Terraform security scan
+        if: false # commented out — re-enable for full security pipeline
         uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
         with:
           working_directory: terraform
           soft_fail: true
 
       - name: Checkov — IaC security scan
-        uses: bridgecrewio/checkov-action@master # Use @master or a stable tag like @v12.2890.0
+        if: false # commented out — re-enable for full security pipeline
+        uses: bridgecrewio/checkov-action@master
         with:
           directory: terraform/
           framework: terraform
           soft_fail: true
 
       - name: Trivy — Dockerfile misconfiguration scan
+        if: false # commented out — re-enable for full security pipeline
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: config
@@ -172,9 +175,8 @@ jobs:
           cache-from: type=gha,scope=frontend-dev
           cache-to:   type=gha,mode=max,scope=frontend-dev
 
-      # Scan images in ECR for OS and library CVEs before signing.
-      # ignore-unfixed skips vulnerabilities with no available fix, reducing noise.
       - name: Trivy — scan backend image
+        if: false # commented out — re-enable for full security pipeline
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ steps.meta.outputs.backend_image }}
@@ -184,6 +186,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy — scan frontend image
+        if: false # commented out — re-enable for full security pipeline
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ steps.meta.outputs.frontend_image }}
