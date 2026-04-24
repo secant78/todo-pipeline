@@ -1,12 +1,14 @@
+import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 import App from "./App";
 
-// Mock the API module so tests don't make real HTTP calls
+// Stub out TodoList so its useEffect never calls api.getTodos()
+jest.mock("./components/TodoList", () => () => null);
+
 jest.mock("./api", () => ({
   __esModule: true,
   api: {
     logout: jest.fn().mockResolvedValue({}),
-    getTodos: jest.fn().mockResolvedValue([]),
   },
 }));
 
