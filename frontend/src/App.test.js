@@ -3,6 +3,7 @@ import App from "./App";
 
 // Mock the API module so tests don't make real HTTP calls
 jest.mock("./api", () => ({
+  __esModule: true,
   api: {
     logout: jest.fn().mockResolvedValue({}),
     getTodos: jest.fn().mockResolvedValue([]),
