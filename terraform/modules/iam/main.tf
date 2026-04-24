@@ -130,6 +130,48 @@ resource "aws_iam_role_policy" "github_actions" {
         Action   = ["logs:PutLogEvents", "logs:CreateLogStream"]
         Resource = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/ecs/todo-${var.env}/*"
       },
+      {
+        Effect   = "Allow"
+        Action   = ["iam:ListOpenIDConnectProviders", "iam:GetOpenIDConnectProvider"]
+        Resource = "*"
+      },
+      {
+        # Terraform needs to read/write VPC, subnets, SGs, ALB, CloudWatch, Secrets Manager,
+        # CodeDeploy, Lambda, and IAM roles/policies to plan and apply the full stack.
+        Effect = "Allow"
+        Action = [
+          "ec2:*",
+          "elasticloadbalancing:*",
+          "cloudwatch:*",
+          "logs:*",
+          "secretsmanager:*",
+          "codedeploy:*",
+          "lambda:*",
+          "iam:CreateRole",
+          "iam:DeleteRole",
+          "iam:GetRole",
+          "iam:ListRoles",
+          "iam:UpdateAssumeRolePolicy",
+          "iam:PutRolePolicy",
+          "iam:GetRolePolicy",
+          "iam:DeleteRolePolicy",
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+          "iam:ListInstanceProfilesForRole",
+          "iam:TagRole",
+          "iam:UntagRole",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket",
+          "s3:DeleteObject",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+        ]
+        Resource = "*"
+      },
     ]
   })
 }
