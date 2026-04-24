@@ -185,6 +185,25 @@ jobs:
           sarif_file: checkov.sarif
           category: checkov
 
+      # Trivy config scan catches Dockerfile misconfigurations (e.g. running as
+      # root, ADD vs COPY, missing USER instruction) before images are built.
+      - name: Trivy — Dockerfile misconfiguration scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-config.sarif
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@dd746615b3dff6e73b57f290f0b90f48c4cd69ad # v3.28.5
+        if: always()
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
       - name: Upload scan artifacts
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         if: always()
@@ -193,4 +212,5 @@ jobs:
           path: |
             tfsec.sarif
             checkov.sarif
+            trivy-config.sarif
           retention-days: 14

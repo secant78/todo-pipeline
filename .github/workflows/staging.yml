@@ -113,6 +113,14 @@ jobs:
           config_file: .checkov.yaml
           soft_fail: true
 
+      - name: Trivy — Dockerfile misconfiguration scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+
   # ── Stage 2: build + push + sign ───────────────────────────────────────────
   build:
     name: Build & Push
@@ -168,6 +176,24 @@ jobs:
           build-args: REACT_APP_API_URL=/api
           cache-from: type=gha,scope=frontend-staging
           cache-to:   type=gha,mode=max,scope=frontend-staging
+
+      - name: Trivy — scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.backend_image }}
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: Trivy — scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.frontend_image }}
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0

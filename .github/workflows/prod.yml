@@ -115,6 +115,14 @@ jobs:
           config_file: .checkov.yaml
           soft_fail: true
 
+      - name: Trivy — Dockerfile misconfiguration scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+
   # ── Stage 2: manual approval gate (configured in GitHub Environments) ───────
   # A required reviewer must approve in the GitHub Actions UI before build runs.
   approve:
@@ -193,6 +201,24 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+
+      - name: Trivy — scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.backend_image }}
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: Trivy — scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.frontend_image }}
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
 
       # Verify the signed dev/staging images (same SHA) before signing the prod tag.
       # This confirms the image wasn't tampered with between staging and prod push.
