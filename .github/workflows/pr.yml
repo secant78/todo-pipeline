@@ -47,17 +47,12 @@ jobs:
             --cov-report=term-missing \
             --cov-fail-under=80
 
-      - name: Install backend dependencies for Snyk
-        working-directory: ${{ github.workspace }}
-        run: pip install -r backend/requirements.txt
-
       - name: Snyk — Python dependency scan
-        uses: snyk/actions/python-3.10@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+        run: |
+          npm install -g snyk
+          snyk test --severity-threshold=high --file=requirements.txt
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high --file=backend/requirements.txt
-        continue-on-error: false
 
       # ESLint security plugin still covers JS-adjacent patterns in any .py files
       # SonarQube handles the full SAST analysis below.
@@ -103,12 +98,9 @@ jobs:
       # Snyk for npm: detects vulns in transitive deps that npm audit misses,
       # and can open automatic fix PRs via the Snyk dashboard.
       - name: Snyk — npm dependency scan
-        uses: snyk/actions/node@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+        run: npx snyk test --severity-threshold=high --file=package.json
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high --file=frontend/package.json
-        continue-on-error: false
 
       # ESLint with security plugin (catches eval, injection patterns, etc.)
       - name: SAST — ESLint security
