@@ -29,7 +29,6 @@ module "secrets" {
   env               = var.env
   aws_region        = var.aws_region
   aws_account_id    = var.aws_account_id
-  rotator_role_arn  = module.iam.rotator_role_arn
   rotator_role_id   = module.iam.rotator_role_id
   execution_role_id = module.iam.execution_role_id
   rotator_zip_path  = "${path.module}/rotator.zip"
