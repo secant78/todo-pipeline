@@ -48,11 +48,14 @@ jobs:
         run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
 
       - name: Snyk — Python dependency scan
-        uses: snyk/actions/python-3.10@master # Use @master or a verified tag like @v0.4.0
+        # The snyk/actions/python-3.10 Docker action runs in an isolated container
+        # that cannot see packages installed on the host runner, causing SNYK-OS-PYTHON-0013.
+        # Using the CLI directly on the host runner resolves this.
+        run: |
+          npm install -g snyk
+          snyk test --severity-threshold=high --file=backend/requirements.txt
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high --file=backend/requirements.txt
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
