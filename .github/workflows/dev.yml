@@ -107,15 +107,6 @@ jobs:
           framework: terraform
           soft_fail: true
 
-      - name: Trivy — Dockerfile misconfiguration scan
-        if: false # commented out — re-enable for full security pipeline
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: config
-          scan-ref: .
-          exit-code: '1'
-          severity: HIGH,CRITICAL
-
   # ── Stage 2: build images with layer caching, sign with Cosign ─────────────
   build:
     name: Build & Push
@@ -174,26 +165,6 @@ jobs:
           build-args: REACT_APP_API_URL=/api
           cache-from: type=gha,scope=frontend-dev
           cache-to:   type=gha,mode=max,scope=frontend-dev
-
-      - name: Trivy — scan backend image
-        if: false # commented out — re-enable for full security pipeline
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ steps.meta.outputs.backend_image }}
-          format: table
-          exit-code: '1'
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-
-      - name: Trivy — scan frontend image
-        if: false # commented out — re-enable for full security pipeline
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ steps.meta.outputs.frontend_image }}
-          format: table
-          exit-code: '1'
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
 
       # Cosign keyless signing — uses the GitHub Actions OIDC token as the
       # signing identity.  No private keys to store or rotate.
