@@ -19,17 +19,15 @@ env:
 
 jobs:
 
-  # ── Stage 1: tests, audits, SAST, IaC scan ─────────────────────────────────
+  # ── Stage 1: functional tests + Terraform validate ─────────────────────────
   validate:
     name: Validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    # Permissions are scoped to the job that needs them, not the whole workflow.
     permissions:
       contents: read
-      security-events: write
-      id-token: write # Required for OIDC
+      id-token: write
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -45,15 +43,7 @@ jobs:
 
       - name: Backend tests
         working-directory: backend
-        run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
-
-      - name: Snyk — Python dependency scan
-        if: false # commented out — re-enable for full security pipeline
-        run: |
-          npm install -g snyk
-          snyk test --severity-threshold=high --file=backend/requirements.txt
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -69,19 +59,6 @@ jobs:
         working-directory: frontend
         run: npm test
 
-      - name: Snyk — npm dependency scan
-        if: false # commented out — re-enable for full security pipeline
-        uses: snyk/actions/node@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high --file=frontend/package.json
-
-      - name: SAST — ESLint security
-        if: false # commented out — re-enable for full security pipeline
-        working-directory: frontend
-        run: npm run lint
-
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
           terraform_version: "1.8.0"
@@ -92,21 +69,6 @@ jobs:
           terraform init -backend=false
           terraform validate
 
-      - name: tfsec — Terraform security scan
-        if: false # commented out — re-enable for full security pipeline
-        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
-        with:
-          working_directory: terraform
-          soft_fail: true
-
-      - name: Checkov — IaC security scan
-        if: false # commented out — re-enable for full security pipeline
-        uses: bridgecrewio/checkov-action@master
-        with:
-          directory: terraform/
-          framework: terraform
-          soft_fail: true
-
   # ── Stage 2: build images with layer caching, sign with Cosign ─────────────
   build:
     name: Build & Push
@@ -116,8 +78,7 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write   # OIDC for AWS + Cosign keyless signing
-      
+      id-token: write
 
     outputs:
       backend_image:  ${{ steps.meta.outputs.backend_image }}
@@ -143,8 +104,6 @@ jobs:
           echo "backend_image=$BACKEND"   >> $GITHUB_OUTPUT
           echo "frontend_image=$FRONTEND" >> $GITHUB_OUTPUT
 
-      # Buildx enables the GHA layer cache, which dramatically cuts build times
-      # on subsequent runs by reusing unchanged layers.
       - uses: docker/setup-buildx-action@988b5a0280414f521da01fcc63a27aeeb4b104db # v3.7.1
 
       - name: Build and push backend
@@ -166,9 +125,6 @@ jobs:
           cache-from: type=gha,scope=frontend-dev
           cache-to:   type=gha,mode=max,scope=frontend-dev
 
-      # Cosign keyless signing — uses the GitHub Actions OIDC token as the
-      # signing identity.  No private keys to store or rotate.
-      # The signature is recorded in the Rekor transparency log.
       - name: Install Cosign
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
