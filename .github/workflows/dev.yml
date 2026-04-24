@@ -49,6 +49,7 @@ jobs:
       - name: Snyk — Python dependency scan
         run: |
           npm install -g snyk
+          snyk auth $SNYK_TOKEN
           snyk test --severity-threshold=high --file=backend/requirements.txt
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
