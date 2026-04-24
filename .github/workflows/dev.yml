@@ -171,15 +171,11 @@ jobs:
           terraform_version: "1.8.0"
 
       - name: Terraform init
-        working-directory: terraform
-        run: terraform init
-
-      - name: Select dev workspace
-        working-directory: terraform
-        run: terraform workspace select dev || terraform workspace new dev
+        working-directory: terraform/stack
+        run: terraform init -upgrade
 
       - name: Terraform plan
-        working-directory: terraform
+        working-directory: terraform/stack
         run: |
           terraform plan \
             -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
@@ -191,11 +187,11 @@ jobs:
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: tfplan-dev-${{ github.sha }}
-          path: terraform/tfplan
+          path: terraform/stack/tfplan
           retention-days: 7
 
       - name: Terraform apply
-        working-directory: terraform
+        working-directory: terraform/stack
         run: terraform apply -auto-approve tfplan
 
       - name: Deploy to ECS
