@@ -1,0 +1,196 @@
+name: Cleanup — Dev (manual)
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  cleanup:
+    name: Delete all todo-dev AWS resources
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-dev-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete ECS services and cluster
+        run: |
+          for SVC in todo-dev-backend todo-dev-frontend; do
+            aws ecs update-service --cluster todo-dev --service $SVC --desired-count 0 2>/dev/null || true
+            aws ecs delete-service --cluster todo-dev --service $SVC --force 2>/dev/null || true
+          done
+          aws ecs delete-cluster --cluster todo-dev 2>/dev/null || true
+
+      - name: Delete CodeDeploy resources
+        run: |
+          APP=todo-dev-app
+          for DG in todo-dev-backend-dg todo-dev-frontend-dg; do
+            aws deploy delete-deployment-group --application-name $APP --deployment-group-name $DG 2>/dev/null || true
+          done
+          aws deploy delete-application --application-name $APP 2>/dev/null || true
+
+      - name: Delete CloudWatch alarms and dashboard
+        run: |
+          aws cloudwatch delete-alarms --alarm-names \
+            todo-dev-alb-5xx \
+            todo-dev-backend-cpu-high \
+            todo-dev-backend-memory-high \
+            todo-dev-backend-no-healthy-hosts 2>/dev/null || true
+          aws cloudwatch delete-dashboards --dashboard-names todo-dev 2>/dev/null || true
+
+      - name: Delete ALB, listeners, and target groups
+        run: |
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names todo-dev \
+            --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || true)
+          if [[ -n "$ALB_ARN" && "$ALB_ARN" != "None" ]]; then
+            for L in $(aws elbv2 describe-listeners --load-balancer-arn $ALB_ARN \
+              --query 'Listeners[*].ListenerArn' --output text 2>/dev/null); do
+              aws elbv2 delete-listener --listener-arn $L 2>/dev/null || true
+            done
+            aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN
+            aws elbv2 wait load-balancers-deleted --load-balancer-arns $ALB_ARN 2>/dev/null || true
+          fi
+          for TG in todo-dev-backend todo-dev-frontend todo-dev-backend-green todo-dev-frontend-green; do
+            TG_ARN=$(aws elbv2 describe-target-groups --names $TG \
+              --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
+            [[ -n "$TG_ARN" && "$TG_ARN" != "None" ]] && \
+              aws elbv2 delete-target-group --target-group-arn $TG_ARN 2>/dev/null || true
+          done
+
+      - name: Delete Secrets Manager secret
+        run: |
+          aws secretsmanager delete-secret \
+            --secret-id todo-dev/jwt-secret-key \
+            --force-delete-without-recovery 2>/dev/null || true
+
+      - name: Delete Lambda functions
+        run: |
+          aws lambda delete-function --function-name todo-dev-jwt-rotator 2>/dev/null || true
+
+      - name: Delete CloudWatch log groups
+        run: |
+          for LG in /ecs/todo-dev/backend /ecs/todo-dev/frontend /ecs/todo-dev/pipeline; do
+            aws logs delete-log-group --log-group-name $LG 2>/dev/null || true
+          done
+
+      - name: Delete SNS topic
+        run: |
+          SNS_ARN=$(aws sns list-topics \
+            --query "Topics[?contains(TopicArn,'todo-dev-alerts')].TopicArn | [0]" \
+            --output text 2>/dev/null || true)
+          [[ -n "$SNS_ARN" && "$SNS_ARN" != "None" ]] && \
+            aws sns delete-topic --topic-arn $SNS_ARN 2>/dev/null || true
+
+      - name: Delete IAM roles and policies
+        run: |
+          for ROLE in todo-dev-github-actions todo-dev-ecs-execution todo-dev-ecs-task todo-dev-secret-rotator; do
+            for PA in $(aws iam list-attached-role-policies --role-name $ROLE \
+              --query 'AttachedPolicies[*].PolicyArn' --output text 2>/dev/null); do
+              aws iam detach-role-policy --role-name $ROLE --policy-arn $PA 2>/dev/null || true
+            done
+            for PN in $(aws iam list-role-policies --role-name $ROLE \
+              --query 'PolicyNames[*]' --output text 2>/dev/null); do
+              aws iam delete-role-policy --role-name $ROLE --policy-name $PN 2>/dev/null || true
+            done
+            aws iam delete-role --role-name $ROLE 2>/dev/null || true
+          done
+
+      - name: Delete VPCs and all networking resources
+        run: |
+          for VPC_ID in $(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=todo-dev" \
+            --query 'Vpcs[*].VpcId' --output text 2>/dev/null); do
+            echo "Cleaning VPC $VPC_ID"
+
+            # Collect NAT GW EIP allocation IDs before deleting
+            EIP_ALLOCS=$(aws ec2 describe-nat-gateways \
+              --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available,pending,deleting" \
+              --query 'NatGateways[*].NatGatewayAddresses[0].AllocationId' \
+              --output text 2>/dev/null || true)
+
+            # Delete NAT gateways
+            for NGW in $(aws ec2 describe-nat-gateways \
+              --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available,pending" \
+              --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null); do
+              aws ec2 delete-nat-gateway --nat-gateway-id $NGW 2>/dev/null || true
+            done
+
+            # Wait for NAT gateways to finish deleting
+            echo "Waiting 60s for NAT gateways to delete..."
+            sleep 60
+
+            # Release EIPs
+            for EIP in $EIP_ALLOCS; do
+              [[ -n "$EIP" && "$EIP" != "None" ]] && \
+                aws ec2 release-address --allocation-id $EIP 2>/dev/null || true
+            done
+
+            # Delete security groups (retry once for dependency ordering)
+            for PASS in 1 2; do
+              for SG in $(aws ec2 describe-security-groups \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+                --output text 2>/dev/null); do
+                aws ec2 delete-security-group --group-id $SG 2>/dev/null || true
+              done
+            done
+
+            # Delete non-main route tables (disassociate first)
+            for RT in $(aws ec2 describe-route-tables \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'RouteTables[?Associations[0].Main!=`true` || !Associations].RouteTableId' \
+              --output text 2>/dev/null); do
+              for ASSOC in $(aws ec2 describe-route-tables --route-table-ids $RT \
+                --query 'RouteTables[0].Associations[?!Main].RouteTableAssociationId' \
+                --output text 2>/dev/null); do
+                aws ec2 disassociate-route-table --association-id $ASSOC 2>/dev/null || true
+              done
+              aws ec2 delete-route-table --route-table-id $RT 2>/dev/null || true
+            done
+
+            # Delete subnets
+            for SN in $(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'Subnets[*].SubnetId' --output text 2>/dev/null); do
+              aws ec2 delete-subnet --subnet-id $SN 2>/dev/null || true
+            done
+
+            # Detach and delete internet gateways
+            for IGW in $(aws ec2 describe-internet-gateways \
+              --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+              --query 'InternetGateways[*].InternetGatewayId' --output text 2>/dev/null); do
+              aws ec2 detach-internet-gateway --internet-gateway-id $IGW --vpc-id $VPC_ID 2>/dev/null || true
+              aws ec2 delete-internet-gateway --internet-gateway-id $IGW 2>/dev/null || true
+            done
+
+            aws ec2 delete-vpc --vpc-id $VPC_ID 2>/dev/null || true
+            echo "Deleted VPC $VPC_ID"
+          done
+
+      - name: Release any remaining unattached todo-dev EIPs
+        run: |
+          for EIP in $(aws ec2 describe-addresses \
+            --query "Addresses[?!AssociationId && Tags[?Key=='Name' && contains(Value,'todo-dev')]].AllocationId" \
+            --output text 2>/dev/null || true); do
+            aws ec2 release-address --allocation-id $EIP 2>/dev/null || true
+          done
+
+      - name: Delete dev Terraform state from S3
+        run: |
+          aws s3 rm s3://todo-pipeline-tfstate/env:/dev/stack/terraform.tfstate 2>/dev/null || true
+          aws dynamodb delete-item \
+            --table-name todo-pipeline-tflock \
+            --key '{"LockID": {"S": "todo-pipeline-tfstate/env:/dev/stack/terraform.tfstate-md5"}}' \
+            2>/dev/null || true
+
+      - name: Summary
+        run: echo "Dev environment cleanup complete. Trigger the dev pipeline to redeploy."
