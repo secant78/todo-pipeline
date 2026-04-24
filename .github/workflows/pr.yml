@@ -47,14 +47,16 @@ jobs:
             --cov-report=term-missing \
             --cov-fail-under=80
 
-      # Snyk replaces pip-audit: deeper vuln DB, fix suggestions, license checks,
-      # and results uploaded to Snyk dashboard for tracking over time.
+      - name: Install backend dependencies for Snyk
+        working-directory: ${{ github.workspace }}
+        run: pip install -r todo-pipeline/backend/requirements.txt
+
       - name: Snyk — Python dependency scan
         uses: snyk/actions/python-3.10@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          args: --severity-threshold=high --file=backend/requirements.txt
+          args: --severity-threshold=high --file=todo-pipeline/backend/requirements.txt
         continue-on-error: false
 
       # ESLint security plugin still covers JS-adjacent patterns in any .py files

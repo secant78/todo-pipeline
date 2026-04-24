@@ -46,12 +46,15 @@ jobs:
         working-directory: backend
         run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
 
+      - name: Install backend dependencies for Snyk
+        run: pip install -r todo-pipeline/backend/requirements.txt
+
       - name: Snyk — Python dependency scan
         uses: snyk/actions/python-3.10@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          args: --severity-threshold=high --file=backend/requirements.txt
+          args: --severity-threshold=high --file=todo-pipeline/backend/requirements.txt
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
