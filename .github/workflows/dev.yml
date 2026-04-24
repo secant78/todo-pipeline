@@ -47,7 +47,7 @@ jobs:
         run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
 
       - name: Snyk — Python dependency scan
-        uses: snyk/actions/python-3.10@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
+        uses: snyk/actions/python-3.10@master # Use @master or a verified tag like @v0.4.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
@@ -68,7 +68,7 @@ jobs:
         run: npm test
 
       - name: Snyk — npm dependency scan
-        uses: snyk/actions/node@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
+        uses: snyk/actions/node@master # Use @master or a stable tag like @v0.4.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
@@ -95,7 +95,7 @@ jobs:
           soft_fail: true
 
       - name: Checkov — IaC security scan
-        uses: bridgecrewio/checkov-action@e9cd879593ec52aa7c88bfa9cde0dce5c3c34e37 # v12.2890.0
+        uses: bridgecrewio/checkov-action@master # Use @master or a stable tag like @v12.2890.0
         with:
           directory: terraform/
           framework: terraform
