@@ -17,11 +17,12 @@ module "iam" {
 }
 
 module "networking" {
-  source             = "../modules/networking"
-  env                = var.env
-  vpc_cidr           = var.vpc_cidr
-  availability_zones = var.availability_zones
-  common_tags        = local.common_tags
+  source              = "../modules/networking"
+  env                 = var.env
+  vpc_cidr            = var.vpc_cidr
+  availability_zones  = var.availability_zones
+  single_nat_gateway  = var.single_nat_gateway
+  common_tags         = local.common_tags
 }
 
 module "secrets" {

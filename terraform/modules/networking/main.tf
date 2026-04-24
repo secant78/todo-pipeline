@@ -29,17 +29,19 @@ resource "aws_internet_gateway" "main" {
   tags   = merge(var.common_tags, { Name = "todo-${var.env}-igw" })
 }
 
-# One Elastic IP and NAT gateway per AZ so private-subnet tasks survive an AZ
-# outage — if AZ-a's NAT fails, AZ-b tasks route through their own NAT gateway.
+locals {
+  nat_count = var.single_nat_gateway ? 1 : length(var.availability_zones)
+}
+
 resource "aws_eip" "nat" {
-  count      = length(var.availability_zones)
+  count      = local.nat_count
   domain     = "vpc"
   depends_on = [aws_internet_gateway.main]
   tags       = merge(var.common_tags, { Name = "todo-${var.env}-nat-eip-${count.index}" })
 }
 
 resource "aws_nat_gateway" "main" {
-  count         = length(var.availability_zones)
+  count         = local.nat_count
   allocation_id = aws_eip.nat[count.index].id
   subnet_id     = aws_subnet.public[count.index].id
   tags          = merge(var.common_tags, { Name = "todo-${var.env}-nat-${count.index}" })
@@ -55,13 +57,12 @@ resource "aws_route_table" "public" {
   tags = merge(var.common_tags, { Name = "todo-${var.env}-public-rt" })
 }
 
-# One private route table per AZ — each routes 0/0 through its own NAT gateway.
 resource "aws_route_table" "private" {
   count  = length(var.availability_zones)
   vpc_id = aws_vpc.main.id
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main[count.index].id
+    nat_gateway_id = var.single_nat_gateway ? aws_nat_gateway.main[0].id : aws_nat_gateway.main[count.index].id
   }
   tags = merge(var.common_tags, { Name = "todo-${var.env}-private-rt-${count.index}" })
 }
