@@ -178,6 +178,7 @@ jobs:
         working-directory: terraform/stack
         run: |
           terraform plan \
+            -var-file="../environments/dev/dev.tfvars" \
             -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
             -var="backend_image_tag=$IMAGE_TAG" \
             -var="frontend_image_tag=$IMAGE_TAG" \
