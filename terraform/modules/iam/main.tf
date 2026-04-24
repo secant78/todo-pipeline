@@ -1,7 +1,7 @@
-# The GitHub Actions OIDC provider is account-wide — look it up rather than
-# trying to create it (it already exists from another project).
-data "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
+# The GitHub Actions OIDC provider ARN is always predictable — no data source
+# lookup needed, which avoids requiring iam:ListOpenIDConnectProviders.
+locals {
+  github_oidc_provider_arn = "arn:aws:iam::${var.aws_account_id}:oidc-provider/token.actions.githubusercontent.com"
 }
 
 # ── ECS execution role ────────────────────────────────────────────────────────
@@ -64,7 +64,7 @@ resource "aws_iam_role" "github_actions" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Federated = data.aws_iam_openid_connect_provider.github.arn }
+      Principal = { Federated = local.github_oidc_provider_arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
@@ -129,11 +129,6 @@ resource "aws_iam_role_policy" "github_actions" {
         Effect   = "Allow"
         Action   = ["logs:PutLogEvents", "logs:CreateLogStream"]
         Resource = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/ecs/todo-${var.env}/*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["iam:ListOpenIDConnectProviders", "iam:GetOpenIDConnectProvider"]
-        Resource = "*"
       },
       {
         # Terraform needs to read/write VPC, subnets, SGs, ALB, CloudWatch, Secrets Manager,
