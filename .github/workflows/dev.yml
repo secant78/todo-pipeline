@@ -209,8 +209,11 @@ jobs:
           imp module.monitoring.aws_cloudwatch_log_group.backend  /ecs/todo-dev/backend
           imp module.monitoring.aws_cloudwatch_log_group.frontend /ecs/todo-dev/frontend
 
-          # Secrets Manager
-          imp module.secrets.aws_secretsmanager_secret.jwt_secret todo-dev/jwt-secret-key
+          # Secrets Manager (import requires ARN, not name)
+          SM_ARN=$(aws secretsmanager describe-secret --secret-id todo-dev/jwt-secret-key \
+            --query 'ARN' --output text 2>/dev/null || true)
+          [[ -n "$SM_ARN" && "$SM_ARN" != "None" ]] && \
+            imp module.secrets.aws_secretsmanager_secret.jwt_secret "$SM_ARN"
 
           # VPC
           VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=todo-dev" \
