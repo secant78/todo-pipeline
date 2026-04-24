@@ -46,6 +46,14 @@ resource "aws_security_group" "alb" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+  # Port 8080 is the CodeDeploy test listener — routes to green (new) tasks
+  # before production traffic shifts, enabling smoke-test validation.
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
   egress {
     from_port   = 0
     to_port     = 0
@@ -153,6 +161,42 @@ resource "aws_lb_target_group" "frontend" {
   tags = var.common_tags
 }
 
+# ── Green (CodeDeploy) target groups ─────────────────────────────────────────
+# Blue TGs (above) hold production traffic initially.
+# CodeDeploy routes new tasks to these green TGs and shifts traffic gradually.
+
+resource "aws_lb_target_group" "backend_green" {
+  name        = "todo-${var.env}-backend-green"
+  port        = 5000
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "ip"
+  health_check {
+    path                = "/api/health"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
+  }
+  tags = var.common_tags
+}
+
+resource "aws_lb_target_group" "frontend_green" {
+  name        = "todo-${var.env}-frontend-green"
+  port        = 80
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "ip"
+  health_check {
+    path                = "/health"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
+  }
+  tags = var.common_tags
+}
+
+# ── Production listener (blue) ────────────────────────────────────────────────
+
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = 80
@@ -172,5 +216,29 @@ resource "aws_lb_listener_rule" "api" {
   action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.backend.arn
+  }
+}
+
+# ── Test listener (green) — CodeDeploy routes here before traffic shift ───────
+
+resource "aws_lb_listener" "test" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = 8080
+  protocol          = "HTTP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.frontend_green.arn
+  }
+}
+
+resource "aws_lb_listener_rule" "api_test" {
+  listener_arn = aws_lb_listener.test.arn
+  priority     = 10
+  condition {
+    path_pattern { values = ["/api/*"] }
+  }
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend_green.arn
   }
 }

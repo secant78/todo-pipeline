@@ -235,15 +235,38 @@ jobs:
         working-directory: terraform/environments/dev
         run: terragrunt apply -auto-approve "${GITHUB_WORKSPACE}/tfplan"
 
-      - name: Deploy to ECS
+      - name: Create CodeDeploy deployments
+        id: codedeploy
         run: |
-          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE  --force-new-deployment
-          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
+          BACKEND_TD=$(aws ecs describe-task-definition \
+            --task-definition $BACKEND_SERVICE \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          FRONTEND_TD=$(aws ecs describe-task-definition \
+            --task-definition $FRONTEND_SERVICE \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
 
-      - name: Wait for stable deployment
+          deploy() {
+            local td=$1 app=$2 group=$3 container=$4 port=$5
+            python3 -c "
+import subprocess, json
+appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':'$td','LoadBalancerInfo':{'ContainerName':'$container','ContainerPort':$port}}}}]}
+revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
+r = subprocess.run(['aws','deploy','create-deployment','--application-name','$app','--deployment-group-name','$group','--revision',json.dumps(revision),'--query','deploymentId','--output','text'],capture_output=True,text=True,check=True)
+print(r.stdout.strip())
+"
+          }
+
+          BACKEND_DEPLOY=$(deploy "$BACKEND_TD" "$BACKEND_SERVICE" "$BACKEND_SERVICE-dg" backend 5000)
+          FRONTEND_DEPLOY=$(deploy "$FRONTEND_TD" "$FRONTEND_SERVICE" "$FRONTEND_SERVICE-dg" frontend 80)
+          echo "backend_deploy_id=$BACKEND_DEPLOY" >> $GITHUB_OUTPUT
+          echo "frontend_deploy_id=$FRONTEND_DEPLOY" >> $GITHUB_OUTPUT
+
+      - name: Wait for deployments
         run: |
-          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
-          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
+          aws deploy wait deployment-successful \
+            --deployment-id ${{ steps.codedeploy.outputs.backend_deploy_id }}
+          aws deploy wait deployment-successful \
+            --deployment-id ${{ steps.codedeploy.outputs.frontend_deploy_id }}
 
       - name: Health check
         run: |
@@ -254,10 +277,23 @@ jobs:
       - name: Rollback on failure
         if: failure() && steps.save-task-defs.outputs.backend_td != ''
         run: |
-          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE \
-            --task-definition ${{ steps.save-task-defs.outputs.backend_td }} --force-new-deployment
-          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE \
-            --task-definition ${{ steps.save-task-defs.outputs.frontend_td }} --force-new-deployment
+          # Stop in-progress deployments (triggers CodeDeploy auto-rollback if still running)
+          aws deploy stop-deployment \
+            --deployment-id ${{ steps.codedeploy.outputs.backend_deploy_id }} \
+            --auto-rollback-enabled 2>/dev/null || true
+          aws deploy stop-deployment \
+            --deployment-id ${{ steps.codedeploy.outputs.frontend_deploy_id }} \
+            --auto-rollback-enabled 2>/dev/null || true
+          # If deployments already completed, create rollback deployments with previous task defs
+          python3 -c "
+import subprocess, json
+def rollback(td, app, group, container, port):
+    appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':td,'LoadBalancerInfo':{'ContainerName':container,'ContainerPort':port}}}}]}
+    revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
+    subprocess.run(['aws','deploy','create-deployment','--application-name',app,'--deployment-group-name',group,'--revision',json.dumps(revision)],check=True)
+rollback('${{ steps.save-task-defs.outputs.backend_td }}','$BACKEND_SERVICE','$BACKEND_SERVICE-dg','backend',5000)
+rollback('${{ steps.save-task-defs.outputs.frontend_td }}','$FRONTEND_SERVICE','$FRONTEND_SERVICE-dg','frontend',80)
+" || true
 
       - name: Log deployment result
         if: always()

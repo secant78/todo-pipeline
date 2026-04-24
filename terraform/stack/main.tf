@@ -80,3 +80,22 @@ module "monitoring" {
   backend_tg_arn_suffix = module.networking.backend_tg_arn_suffix
   common_tags           = local.common_tags
 }
+
+module "codedeploy" {
+  source                 = "../modules/codedeploy"
+  env                    = var.env
+  cluster_name           = module.ecs.cluster_name
+  backend_service_name   = module.ecs.backend_service_name
+  frontend_service_name  = module.ecs.frontend_service_name
+  backend_blue_tg_name   = module.networking.backend_blue_tg_name
+  backend_green_tg_name  = module.networking.backend_green_tg_name
+  frontend_blue_tg_name  = module.networking.frontend_blue_tg_name
+  frontend_green_tg_name = module.networking.frontend_green_tg_name
+  prod_listener_arn      = module.networking.alb_listener_arn
+  test_listener_arn      = module.networking.test_listener_arn
+  rollback_alarm_names   = module.monitoring.rollback_alarm_names
+  deployment_config_name = var.deployment_config_name
+  common_tags            = local.common_tags
+
+  depends_on = [module.ecs, module.monitoring]
+}

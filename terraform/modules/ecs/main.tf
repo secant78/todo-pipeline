@@ -115,8 +115,13 @@ resource "aws_ecs_service" "backend" {
     container_port   = 5000
   }
 
-  deployment_minimum_healthy_percent = 50
-  deployment_maximum_percent         = 200
+  deployment_controller { type = "CODE_DEPLOY" }
+
+  # CodeDeploy owns the running task definition and which target group is active.
+  # Terraform manages task def registration and infrastructure; CodeDeploy manages rollout.
+  lifecycle {
+    ignore_changes = [task_definition, load_balancer]
+  }
 
   tags = var.common_tags
 }
@@ -140,8 +145,11 @@ resource "aws_ecs_service" "frontend" {
     container_port   = 80
   }
 
-  deployment_minimum_healthy_percent = 50
-  deployment_maximum_percent         = 200
+  deployment_controller { type = "CODE_DEPLOY" }
+
+  lifecycle {
+    ignore_changes = [task_definition, load_balancer]
+  }
 
   tags = var.common_tags
 }

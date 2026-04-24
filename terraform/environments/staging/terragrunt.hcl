@@ -14,6 +14,7 @@ inputs = {
   cpu                = 512
   memory             = 1024
   desired_count      = 1
-  github_repo        = "secant78/todo-pipeline"
-  github_branch      = "staging"
+  github_repo            = "secant78/todo-pipeline"
+  github_branch          = "staging"
+  deployment_config_name = "CodeDeployDefault.ECSCanary10Percent5Minutes"
 }

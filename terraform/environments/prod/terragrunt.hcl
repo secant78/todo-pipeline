@@ -14,6 +14,7 @@ inputs = {
   cpu                = 1024
   memory             = 2048
   desired_count      = 2
-  github_repo        = "secant78/todo-pipeline"
-  github_branch      = "main"
+  github_repo            = "secant78/todo-pipeline"
+  github_branch          = "main"
+  deployment_config_name = "CodeDeployDefault.ECSLinear10PercentEvery1Minute"
 }

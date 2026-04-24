@@ -1,0 +1,13 @@
+variable "env"                    { type = string }
+variable "cluster_name"          { type = string }
+variable "backend_service_name"  { type = string }
+variable "frontend_service_name" { type = string }
+variable "backend_blue_tg_name"  { type = string }
+variable "backend_green_tg_name" { type = string }
+variable "frontend_blue_tg_name" { type = string }
+variable "frontend_green_tg_name"{ type = string }
+variable "prod_listener_arn"     { type = string }
+variable "test_listener_arn"     { type = string }
+variable "rollback_alarm_names"  { type = list(string) }
+variable "deployment_config_name"{ type = string }
+variable "common_tags"           { type = map(string) }
