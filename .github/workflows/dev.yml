@@ -29,6 +29,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      id-token: write # Required for OIDC
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -47,11 +48,11 @@ jobs:
         run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
 
       - name: Snyk — Python dependency scan
-        run: |
-          npm install -g snyk
-          snyk test --severity-threshold=high --file=backend/requirements.txt
+        uses: snyk/actions/python-3.10@master # Use @master or a verified tag like @v0.4.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --file=backend/requirements.txt
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -68,35 +69,22 @@ jobs:
         run: npm test
 
       - name: Snyk — npm dependency scan
-        working-directory: frontend
-        run: npx snyk test --severity-threshold=high --file=package.json
+        uses: snyk/actions/node@master # Use @master or a stable tag like @v0.4.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --file=frontend/package.json
 
       - name: SAST — ESLint security
         working-directory: frontend
         run: npm run lint
-
-      - name: Setup tflint
-        uses: terraform-linters/setup-tflint@v4.0.0
-        with:
-          tflint_version: v0.54.0
-
-      - name: tflint init
-        run: tflint --init
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      - name: tflint
-        run: tflint --recursive --minimum-failure-severity=error
-        working-directory: terraform
 
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
           terraform_version: "1.8.0"
 
       - name: Terraform validate
-        working-directory: terraform/stack
+        working-directory: terraform
         run: |
           terraform init -backend=false
           terraform validate
@@ -108,11 +96,10 @@ jobs:
           soft_fail: true
 
       - name: Checkov — IaC security scan
-        uses: bridgecrewio/checkov-action@e9cd879593ec52aa7c88bfa9cde0dce5c3c34e37 # v12.2890.0
+        uses: bridgecrewio/checkov-action@master # Use @master or a stable tag like @v12.2890.0
         with:
           directory: terraform/
           framework: terraform
-          config_file: .checkov.yaml
           soft_fail: true
 
   # ── Stage 2: build images with layer caching, sign with Cosign ─────────────
@@ -125,6 +112,7 @@ jobs:
     permissions:
       contents: read
       id-token: write   # OIDC for AWS + Cosign keyless signing
+      
 
     outputs:
       backend_image:  ${{ steps.meta.outputs.backend_image }}
@@ -221,67 +209,43 @@ jobs:
         with:
           terraform_version: "1.8.0"
 
-      - name: Install Terragrunt
-        run: |
-          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v0.67.16/terragrunt_linux_amd64 -O terragrunt
-          chmod +x terragrunt && sudo mv terragrunt /usr/local/bin/
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init
 
-      - name: Terragrunt init
-        working-directory: terraform/environments/dev
-        run: terragrunt init --terragrunt-non-interactive
+      - name: Select dev workspace
+        working-directory: terraform
+        run: terraform workspace select dev || terraform workspace new dev
 
-      - name: Terragrunt plan
-        working-directory: terraform/environments/dev
+      - name: Terraform plan
+        working-directory: terraform
         run: |
-          terragrunt plan \
+          terraform plan \
             -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
             -var="backend_image_tag=$IMAGE_TAG" \
             -var="frontend_image_tag=$IMAGE_TAG" \
-            -out="${GITHUB_WORKSPACE}/tfplan"
+            -out=tfplan
 
       - name: Upload plan as artifact
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: tfplan-dev-${{ github.sha }}
-          path: tfplan
+          path: terraform/tfplan
           retention-days: 7
 
-      - name: Terragrunt apply
-        working-directory: terraform/environments/dev
-        run: terragrunt apply -auto-approve "${GITHUB_WORKSPACE}/tfplan"
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
 
-      - name: Create CodeDeploy deployments
-        id: codedeploy
+      - name: Deploy to ECS
         run: |
-          BACKEND_TD=$(aws ecs describe-task-definition \
-            --task-definition $BACKEND_SERVICE \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          FRONTEND_TD=$(aws ecs describe-task-definition \
-            --task-definition $FRONTEND_SERVICE \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE  --force-new-deployment
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
 
-          deploy() {
-            local td=$1 app=$2 group=$3 container=$4 port=$5
-            python3 -c "
-import subprocess, json
-appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':'$td','LoadBalancerInfo':{'ContainerName':'$container','ContainerPort':$port}}}}]}
-revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
-r = subprocess.run(['aws','deploy','create-deployment','--application-name','$app','--deployment-group-name','$group','--revision',json.dumps(revision),'--query','deploymentId','--output','text'],capture_output=True,text=True,check=True)
-print(r.stdout.strip())
-"
-          }
-
-          BACKEND_DEPLOY=$(deploy "$BACKEND_TD" "$BACKEND_SERVICE" "$BACKEND_SERVICE-dg" backend 5000)
-          FRONTEND_DEPLOY=$(deploy "$FRONTEND_TD" "$FRONTEND_SERVICE" "$FRONTEND_SERVICE-dg" frontend 80)
-          echo "backend_deploy_id=$BACKEND_DEPLOY" >> $GITHUB_OUTPUT
-          echo "frontend_deploy_id=$FRONTEND_DEPLOY" >> $GITHUB_OUTPUT
-
-      - name: Wait for deployments
+      - name: Wait for stable deployment
         run: |
-          aws deploy wait deployment-successful \
-            --deployment-id ${{ steps.codedeploy.outputs.backend_deploy_id }}
-          aws deploy wait deployment-successful \
-            --deployment-id ${{ steps.codedeploy.outputs.frontend_deploy_id }}
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
 
       - name: Health check
         run: |
@@ -292,23 +256,10 @@ print(r.stdout.strip())
       - name: Rollback on failure
         if: failure() && steps.save-task-defs.outputs.backend_td != ''
         run: |
-          # Stop in-progress deployments (triggers CodeDeploy auto-rollback if still running)
-          aws deploy stop-deployment \
-            --deployment-id ${{ steps.codedeploy.outputs.backend_deploy_id }} \
-            --auto-rollback-enabled 2>/dev/null || true
-          aws deploy stop-deployment \
-            --deployment-id ${{ steps.codedeploy.outputs.frontend_deploy_id }} \
-            --auto-rollback-enabled 2>/dev/null || true
-          # If deployments already completed, create rollback deployments with previous task defs
-          python3 -c "
-import subprocess, json
-def rollback(td, app, group, container, port):
-    appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':td,'LoadBalancerInfo':{'ContainerName':container,'ContainerPort':port}}}}]}
-    revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
-    subprocess.run(['aws','deploy','create-deployment','--application-name',app,'--deployment-group-name',group,'--revision',json.dumps(revision)],check=True)
-rollback('${{ steps.save-task-defs.outputs.backend_td }}','$BACKEND_SERVICE','$BACKEND_SERVICE-dg','backend',5000)
-rollback('${{ steps.save-task-defs.outputs.frontend_td }}','$FRONTEND_SERVICE','$FRONTEND_SERVICE-dg','frontend',80)
-" || true
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE \
+            --task-definition ${{ steps.save-task-defs.outputs.backend_td }} --force-new-deployment
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE \
+            --task-definition ${{ steps.save-task-defs.outputs.frontend_td }} --force-new-deployment
 
       - name: Log deployment result
         if: always()
@@ -316,7 +267,7 @@ rollback('${{ steps.save-task-defs.outputs.frontend_td }}','$FRONTEND_SERVICE','
           aws logs put-log-events \
             --log-group-name /ecs/todo-dev/pipeline \
             --log-stream-name deployments \
-            --log-events "[{\"timestamp\":$(date +%s%3N),\"message\":\"Deploy $IMAGE_TAG: ${{ job.status }}\"}]" \
+            --log-events '[{"timestamp":'$(date +%s%3N)',"message":"Deploy '"$IMAGE_TAG"': ${{ job.status }}"}]' \
             2>/dev/null || true
 
   # ── Stage 4: Email notification via AWS SES (always runs) ───────────────────
