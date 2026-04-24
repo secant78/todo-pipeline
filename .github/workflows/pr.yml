@@ -131,13 +131,11 @@ jobs:
           terraform_version: "1.8.0"
 
       - name: Terraform validate
-        working-directory: terraform
+        working-directory: terraform/stack
         run: |
           terraform init -backend=false
           terraform validate
 
-      # tfsec is fast and focused on Terraform-specific security issues.
-      # It catches things like public S3 buckets, unencrypted EBS, open SGs.
       - name: tfsec — Terraform security scan
         uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
         with:

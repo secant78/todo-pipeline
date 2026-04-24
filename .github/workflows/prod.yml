@@ -82,7 +82,7 @@ jobs:
           terraform_version: "1.8.0"
 
       - name: Terraform validate
-        working-directory: terraform
+        working-directory: terraform/stack
         run: |
           terraform init -backend=false
           terraform validate
@@ -232,33 +232,34 @@ jobs:
         with:
           terraform_version: "1.8.0"
 
-      - name: Terraform init
-        working-directory: terraform
-        run: terraform init
-
-      - name: Select prod workspace
-        working-directory: terraform
-        run: terraform workspace select prod || terraform workspace new prod
-
-      - name: Terraform plan
-        working-directory: terraform
+      - name: Install Terragrunt
         run: |
-          terraform plan \
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v0.67.16/terragrunt_linux_amd64 -O terragrunt
+          chmod +x terragrunt && sudo mv terragrunt /usr/local/bin/
+
+      - name: Terragrunt init
+        working-directory: terraform/environments/prod
+        run: terragrunt init --terragrunt-non-interactive
+
+      - name: Terragrunt plan
+        working-directory: terraform/environments/prod
+        run: |
+          terragrunt plan \
             -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
             -var="backend_image_tag=$IMAGE_TAG" \
             -var="frontend_image_tag=$IMAGE_TAG" \
-            -out=tfplan
+            -out="${GITHUB_WORKSPACE}/tfplan"
 
       - name: Upload plan as artifact
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: tfplan-prod-${{ github.sha }}
-          path: terraform/tfplan
+          path: tfplan
           retention-days: 30
 
-      - name: Terraform apply
-        working-directory: terraform
-        run: terraform apply -auto-approve tfplan
+      - name: Terragrunt apply
+        working-directory: terraform/environments/prod
+        run: terragrunt apply -auto-approve "${GITHUB_WORKSPACE}/tfplan"
 
       # Prod deploys backend first, waits for it to be healthy, then deploys
       # frontend — reduces the window where old frontend talks to new API.

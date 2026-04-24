@@ -1,0 +1,12 @@
+output "vpc_id"               { value = aws_vpc.main.id }
+output "public_subnet_ids"   { value = aws_subnet.public[*].id }
+output "alb_sg_id"           { value = aws_security_group.alb.id }
+output "backend_sg_id"       { value = aws_security_group.backend.id }
+output "frontend_sg_id"      { value = aws_security_group.frontend.id }
+output "efs_sg_id"           { value = aws_security_group.efs.id }
+output "alb_dns_name"        { value = aws_lb.main.dns_name }
+output "alb_arn_suffix"      { value = aws_lb.main.arn_suffix }
+output "backend_tg_arn"      { value = aws_lb_target_group.backend.arn }
+output "frontend_tg_arn"     { value = aws_lb_target_group.frontend.arn }
+output "backend_tg_arn_suffix" { value = aws_lb_target_group.backend.arn_suffix }
+output "alb_listener_arn"    { value = aws_lb_listener.http.arn }

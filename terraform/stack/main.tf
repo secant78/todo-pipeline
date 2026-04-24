@@ -1,0 +1,82 @@
+locals {
+  common_tags = {
+    Project     = "todo-pipeline"
+    Environment = var.env
+    ManagedBy   = "terraform"
+  }
+}
+
+module "iam" {
+  source         = "../modules/iam"
+  env            = var.env
+  aws_region     = var.aws_region
+  aws_account_id = var.aws_account_id
+  github_repo    = var.github_repo
+  github_branch  = var.github_branch
+  common_tags    = local.common_tags
+}
+
+module "networking" {
+  source             = "../modules/networking"
+  env                = var.env
+  vpc_cidr           = var.vpc_cidr
+  availability_zones = var.availability_zones
+  common_tags        = local.common_tags
+}
+
+module "efs" {
+  source      = "../modules/efs"
+  env         = var.env
+  subnet_ids  = module.networking.public_subnet_ids
+  efs_sg_id   = module.networking.efs_sg_id
+  common_tags = local.common_tags
+}
+
+module "secrets" {
+  source            = "../modules/secrets"
+  env               = var.env
+  aws_region        = var.aws_region
+  aws_account_id    = var.aws_account_id
+  rotator_role_arn  = module.iam.rotator_role_arn
+  rotator_role_id   = module.iam.rotator_role_id
+  execution_role_id = module.iam.execution_role_id
+  rotator_zip_path  = "${path.module}/rotator.zip"
+  common_tags       = local.common_tags
+}
+
+module "ecs" {
+  source              = "../modules/ecs"
+  env                 = var.env
+  aws_region          = var.aws_region
+  aws_account_id      = var.aws_account_id
+  cpu                 = var.cpu
+  memory              = var.memory
+  desired_count       = var.desired_count
+  backend_image_tag   = var.backend_image_tag
+  frontend_image_tag  = var.frontend_image_tag
+  execution_role_arn  = module.iam.execution_role_arn
+  task_role_arn       = module.iam.task_role_arn
+  subnet_ids          = module.networking.public_subnet_ids
+  backend_sg_id       = module.networking.backend_sg_id
+  frontend_sg_id      = module.networking.frontend_sg_id
+  backend_tg_arn      = module.networking.backend_tg_arn
+  frontend_tg_arn     = module.networking.frontend_tg_arn
+  efs_id              = module.efs.efs_id
+  efs_access_point_id = module.efs.access_point_id
+  jwt_secret_arn      = module.secrets.jwt_secret_arn
+  common_tags         = local.common_tags
+
+  depends_on = [module.secrets, module.efs]
+}
+
+module "monitoring" {
+  source                = "../modules/monitoring"
+  env                   = var.env
+  aws_region            = var.aws_region
+  memory                = var.memory
+  cluster_name          = module.ecs.cluster_name
+  backend_service_name  = module.ecs.backend_service_name
+  alb_arn_suffix        = module.networking.alb_arn_suffix
+  backend_tg_arn_suffix = module.networking.backend_tg_arn_suffix
+  common_tags           = local.common_tags
+}
