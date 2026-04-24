@@ -50,7 +50,7 @@ jobs:
         run: pip install -r todo-pipeline/backend/requirements.txt
 
       - name: Snyk — Python dependency scan
-        uses: snyk/actions/python-3.10@b98d498629f1c5e001b09d4379c38c2f24951ae9 # v0.4.0
+        uses: snyk/actions/python-3.10@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
@@ -71,7 +71,7 @@ jobs:
         run: npm test
 
       - name: Snyk — npm dependency scan
-        uses: snyk/actions/node@master # Use @master or a stable tag like @v0.4.0
+        uses: snyk/actions/node@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
