@@ -312,7 +312,7 @@ print(r.stdout.strip())
 
           TOKEN=$(curl -sf -X POST http://$ALB_DNS/api/auth/signup \
             -H 'Content-Type: application/json' \
-            -d "{\"username\":\"smoke_${{ github.sha }}\",\"email\":\"smoke@test.com\",\"password\":\"smokepass\"}" \
+            -d "{\"username\":\"smoke_$(date +%s)\",\"email\":\"smoke_$(date +%s)@test.com\",\"password\":\"smokepass\"}" \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
           curl --fail -X POST http://$ALB_DNS/api/todos \
