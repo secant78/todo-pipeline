@@ -11,13 +11,10 @@ resource "aws_secretsmanager_secret_version" "jwt_secret" {
   lifecycle { ignore_changes = [secret_string] }
 }
 
-resource "aws_secretsmanager_secret_rotation" "jwt_secret" {
-  secret_id           = aws_secretsmanager_secret.jwt_secret.id
-  rotation_lambda_arn = aws_lambda_function.secret_rotator.arn
-  rotation_rules { automatically_after_days = 30 }
-}
-
+# Rotation is prod-only — the Lambda/permission setup causes reliable
+# failures in dev due to the test-rotation race with AddPermission.
 resource "aws_lambda_function" "secret_rotator" {
+  count            = var.env == "prod" ? 1 : 0
   function_name    = "todo-${var.env}-secret-rotator"
   role             = var.rotator_role_arn
   runtime          = "python3.12"
@@ -29,10 +26,18 @@ resource "aws_lambda_function" "secret_rotator" {
 }
 
 resource "aws_lambda_permission" "secrets_manager" {
+  count         = var.env == "prod" ? 1 : 0
   statement_id  = "AllowSecretsManager"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.secret_rotator.function_name
+  function_name = aws_lambda_function.secret_rotator[0].function_name
   principal     = "secretsmanager.amazonaws.com"
+}
+
+resource "aws_secretsmanager_secret_rotation" "jwt_secret" {
+  count               = var.env == "prod" ? 1 : 0
+  secret_id           = aws_secretsmanager_secret.jwt_secret.id
+  rotation_lambda_arn = aws_lambda_function.secret_rotator[0].arn
+  rotation_rules { automatically_after_days = 30 }
 }
 
 # Allow the ECS execution role to read the JWT secret so it can inject it
