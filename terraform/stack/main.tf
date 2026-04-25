@@ -41,6 +41,7 @@ module "ecs" {
   source              = "../modules/ecs"
   env                 = var.env
   aws_region          = var.aws_region
+  ecr_region          = var.ecr_region
   aws_account_id      = var.aws_account_id
   cpu                 = var.cpu
   memory              = var.memory

@@ -1,5 +1,6 @@
 variable "env"                 { type = string }
 variable "aws_region"         { type = string }
+variable "ecr_region"         { type = string }
 variable "aws_account_id"     { type = string }
 variable "backend_image_tag"  { type = string }
 variable "frontend_image_tag" { type = string }

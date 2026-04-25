@@ -1,5 +1,6 @@
 env                    = "dev"
 aws_region             = "us-east-2"
+ecr_region             = "us-east-1"
 vpc_cidr               = "10.0.0.0/16"
 availability_zones     = ["us-east-2a", "us-east-2b"]
 cpu                    = 256

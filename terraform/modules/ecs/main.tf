@@ -1,6 +1,6 @@
 locals {
-  backend_image        = "${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/todo-pipeline/backend:${var.backend_image_tag}"
-  frontend_image       = "${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/todo-pipeline/frontend:${var.frontend_image_tag}"
+  backend_image        = "${var.aws_account_id}.dkr.ecr.${var.ecr_region}.amazonaws.com/todo-pipeline/backend:${var.backend_image_tag}"
+  frontend_image       = "${var.aws_account_id}.dkr.ecr.${var.ecr_region}.amazonaws.com/todo-pipeline/frontend:${var.frontend_image_tag}"
   backend_log_group    = "/ecs/todo-${var.env}/backend"
   frontend_log_group   = "/ecs/todo-${var.env}/frontend"
 }

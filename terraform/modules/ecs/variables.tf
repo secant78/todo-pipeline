@@ -1,5 +1,6 @@
 variable "env"                   { type = string }
 variable "aws_region"           { type = string }
+variable "ecr_region"           { type = string }
 variable "aws_account_id"       { type = string }
 variable "cpu"                  { type = number }
 variable "memory"               { type = number }
