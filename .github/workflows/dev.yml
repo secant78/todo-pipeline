@@ -195,6 +195,13 @@ jobs:
           path: terraform/stack/tfplan
           retention-days: 7
 
+      - name: Remove stale resources not in state
+        run: |
+          aws lambda delete-function --function-name todo-dev-jwt-rotator --region $AWS_REGION 2>/dev/null || true
+          aws lambda delete-function --function-name todo-dev-secret-rotator --region $AWS_REGION 2>/dev/null || true
+          aws secretsmanager delete-secret --secret-id todo-dev/jwt-secret-key \
+            --force-delete-without-recovery --region $AWS_REGION 2>/dev/null || true
+
       - name: Terraform apply
         working-directory: terraform/stack
         run: terraform apply -auto-approve tfplan

@@ -17,7 +17,3 @@ import {
   id = "todo-dev-secret-rotator"
 }
 
-import {
-  to = module.secrets.aws_lambda_function.secret_rotator
-  id = "todo-dev-secret-rotator"
-}
