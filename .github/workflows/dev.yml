@@ -10,7 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  AWS_REGION:       us-east-1
+  AWS_REGION:       us-east-2
+  ECR_REGION:       us-east-1
   TF_WORKSPACE:     dev
   IMAGE_TAG:        dev-${{ github.sha }}
   CLUSTER_NAME:     todo-dev
@@ -90,7 +91,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-dev-github-actions
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ env.ECR_REGION }}
 
       - name: Log in to Amazon ECR
         id: ecr-login
@@ -174,7 +175,7 @@ jobs:
         working-directory: terraform/stack
         run: |
           unset TF_WORKSPACE
-          terraform init -upgrade
+          terraform init -upgrade -reconfigure
           terraform workspace select dev 2>/dev/null || terraform workspace new dev
 
       - name: Terraform plan

@@ -1,7 +1,7 @@
 env                    = "dev"
-aws_region             = "us-east-1"
+aws_region             = "us-east-2"
 vpc_cidr               = "10.0.0.0/16"
-availability_zones     = ["us-east-1a", "us-east-1b"]
+availability_zones     = ["us-east-2a", "us-east-2b"]
 cpu                    = 256
 memory                 = 512
 desired_count          = 1
