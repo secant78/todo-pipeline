@@ -213,7 +213,7 @@ jobs:
             local revision
             revision=$(jq -n --arg c "$content" '{"revisionType":"AppSpecContent","appSpecContent":{"content":$c}}')
             aws deploy create-deployment \
-              --application-name todo-dev-app \
+              --application-name "todo-dev-$container" \
               --deployment-group-name "$dg" \
               --revision "$revision" \
               --query 'deploymentId' --output text
@@ -250,7 +250,7 @@ jobs:
             local revision
             revision=$(jq -n --arg c "$content" '{"revisionType":"AppSpecContent","appSpecContent":{"content":$c}}')
             aws deploy create-deployment \
-              --application-name todo-dev-app \
+              --application-name "todo-dev-$container" \
               --deployment-group-name "$dg" \
               --revision "$revision" \
               --query 'deploymentId' --output text
