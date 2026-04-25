@@ -4,10 +4,11 @@ on:
   push:
     branches: [dev]
 
-# Only one dev deployment runs at a time.  A new push cancels the in-progress one.
+# Validate/build jobs cancel eagerly; deploy must not be interrupted mid-flight
+# because CodeDeploy blue/green leaves infra in a broken state if canceled.
 concurrency:
   group: deploy-dev
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   AWS_REGION:       us-east-2
