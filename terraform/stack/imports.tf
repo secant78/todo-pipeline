@@ -3,11 +3,6 @@
 # import blocks are a no-op once the resource is already in state.
 
 import {
-  to = module.iam.aws_iam_role.ecs_execution
-  id = "todo-dev-ecs-execution"
-}
-
-import {
   to = module.iam.aws_iam_role.ecs_task
   id = "todo-dev-ecs-task"
 }
