@@ -20,10 +20,20 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-# DB_PATH points at the EFS mount in production (/data/todo.db).
-# JWT_SECRET_KEY is injected from AWS Secrets Manager via the ECS task definition.
-DB_PATH = os.environ.get("DB_PATH", "/data/todo.db")
-app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DB_PATH}"
+# When DB_HOST is set (ECS/production) use PostgreSQL.
+# Fall back to SQLite so tests run without a real database.
+_db_host = os.environ.get("DB_HOST")
+if _db_host:
+    _db_user = os.environ.get("DB_USER", "todo")
+    _db_pass = os.environ.get("DB_PASSWORD", "")
+    _db_port = os.environ.get("DB_PORT", "5432")
+    _db_name = os.environ.get("DB_NAME", "todo")
+    _DATABASE_URI = f"postgresql://{_db_user}:{_db_pass}@{_db_host}:{_db_port}/{_db_name}"
+else:
+    _db_path = os.environ.get("DB_PATH", "/tmp/todo.db")
+    _DATABASE_URI = f"sqlite:///{_db_path}"
+
+app.config["SQLALCHEMY_DATABASE_URI"] = _DATABASE_URI
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY", "dev-only-change-me")
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24)
@@ -59,11 +69,12 @@ class Todo(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
 
 
-# Create tables on startup; makedirs handles the EFS mount not yet having /data
+# Create tables on startup
 with app.app_context():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    if not _db_host:
+        os.makedirs(os.path.dirname(_db_path), exist_ok=True)
     db.create_all()
-    logger.info("Database ready at %s", DB_PATH)
+    logger.info("Database ready (%s)", "postgres" if _db_host else _db_path)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

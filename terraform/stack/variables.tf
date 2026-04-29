@@ -16,3 +16,13 @@ variable "single_nat_gateway" {
   type    = bool
   default = false
 }
+
+variable "rds_instance_class" {
+  type    = string
+  default = "db.t3.micro"
+}
+
+variable "rds_allocated_storage" {
+  type    = number
+  default = 20
+}

@@ -1,13 +1,18 @@
 import os
-import tempfile
 import pytest
 
-# Set DB_PATH BEFORE any test file imports app, because app.py reads the env
-# var at module load time to configure SQLAlchemy.
-_tmp = tempfile.mkdtemp()
-os.environ["DB_PATH"] = os.path.join(_tmp, "test.db")
-os.environ["JWT_SECRET_KEY"] = "test-secret-key-not-for-production"
-os.environ["APP_ENV"] = "test"
+# Tests run against a real PostgreSQL instance (provided by the GitHub Actions
+# service container, or a local Postgres when developing).
+# Required env vars: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+# These must be set before any test file imports app, because app.py reads them
+# at module load time to configure SQLAlchemy.
+os.environ.setdefault("DB_HOST",     "localhost")
+os.environ.setdefault("DB_PORT",     "5432")
+os.environ.setdefault("DB_NAME",     "todo")
+os.environ.setdefault("DB_USER",     "todo")
+os.environ.setdefault("DB_PASSWORD", "testpassword")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production")
+os.environ.setdefault("APP_ENV", "test")
 
 
 @pytest.fixture

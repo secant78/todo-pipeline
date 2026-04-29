@@ -30,12 +30,15 @@ resource "aws_ecs_task_definition" "backend" {
     portMappings = [{ containerPort = 5000, protocol = "tcp" }]
     environment = [
       { name = "APP_ENV", value = var.env },
-      { name = "DB_PATH", value = "/tmp/todo.db" },
+      { name = "DB_HOST", value = var.db_host },
+      { name = "DB_PORT", value = var.db_port },
+      { name = "DB_NAME", value = var.db_name },
+      { name = "DB_USER", value = var.db_user },
     ]
-    secrets = [{
-      name      = "JWT_SECRET_KEY"
-      valueFrom = var.jwt_secret_arn
-    }]
+    secrets = [
+      { name = "JWT_SECRET_KEY", valueFrom = var.jwt_secret_arn },
+      { name = "DB_PASSWORD",    valueFrom = var.db_password_arn },
+    ]
     logConfiguration = {
       logDriver = "awslogs"
       options = {

@@ -17,12 +17,24 @@ module "iam" {
 }
 
 module "networking" {
-  source              = "../modules/networking"
-  env                 = var.env
-  vpc_cidr            = var.vpc_cidr
-  availability_zones  = var.availability_zones
-  single_nat_gateway  = var.single_nat_gateway
-  common_tags         = local.common_tags
+  source             = "../modules/networking"
+  env                = var.env
+  vpc_cidr           = var.vpc_cidr
+  availability_zones = var.availability_zones
+  single_nat_gateway = var.single_nat_gateway
+  common_tags        = local.common_tags
+}
+
+module "rds" {
+  source            = "../modules/rds"
+  env               = var.env
+  vpc_id            = module.networking.vpc_id
+  subnet_ids        = module.networking.private_subnet_ids
+  backend_sg_id     = module.networking.backend_sg_id
+  execution_role_id = module.iam.execution_role_id
+  instance_class    = var.rds_instance_class
+  allocated_storage = var.rds_allocated_storage
+  common_tags       = local.common_tags
 }
 
 module "secrets" {
@@ -38,39 +50,44 @@ module "secrets" {
 }
 
 module "ecs" {
-  source              = "../modules/ecs"
-  env                 = var.env
-  aws_region          = var.aws_region
-  ecr_region          = var.ecr_region
-  aws_account_id      = var.aws_account_id
-  cpu                 = var.cpu
-  memory              = var.memory
-  desired_count       = var.desired_count
-  backend_image_tag   = var.backend_image_tag
-  frontend_image_tag  = var.frontend_image_tag
-  execution_role_arn  = module.iam.execution_role_arn
-  task_role_arn       = module.iam.task_role_arn
-  subnet_ids          = module.networking.private_subnet_ids
-  backend_sg_id       = module.networking.backend_sg_id
-  frontend_sg_id      = module.networking.frontend_sg_id
-  backend_tg_arn      = module.networking.backend_tg_arn
-  frontend_tg_arn     = module.networking.frontend_tg_arn
-  jwt_secret_arn      = module.secrets.jwt_secret_arn
-  common_tags         = local.common_tags
+  source             = "../modules/ecs"
+  env                = var.env
+  aws_region         = var.aws_region
+  ecr_region         = var.ecr_region
+  aws_account_id     = var.aws_account_id
+  cpu                = var.cpu
+  memory             = var.memory
+  desired_count      = var.desired_count
+  backend_image_tag  = var.backend_image_tag
+  frontend_image_tag = var.frontend_image_tag
+  execution_role_arn = module.iam.execution_role_arn
+  task_role_arn      = module.iam.task_role_arn
+  subnet_ids         = module.networking.private_subnet_ids
+  backend_sg_id      = module.networking.backend_sg_id
+  frontend_sg_id     = module.networking.frontend_sg_id
+  backend_tg_arn     = module.networking.backend_tg_arn
+  frontend_tg_arn    = module.networking.frontend_tg_arn
+  jwt_secret_arn     = module.secrets.jwt_secret_arn
+  db_host            = module.rds.db_host
+  db_port            = module.rds.db_port
+  db_name            = module.rds.db_name
+  db_user            = module.rds.db_user
+  db_password_arn    = module.rds.db_password_arn
+  common_tags        = local.common_tags
 
-  depends_on = [module.secrets]
+  depends_on = [module.secrets, module.rds]
 }
 
 module "monitoring" {
-  source                = "../modules/monitoring"
-  env                   = var.env
-  aws_region            = var.aws_region
-  memory                = var.memory
-  cluster_name          = module.ecs.cluster_name
-  backend_service_name  = module.ecs.backend_service_name
-  alb_arn_suffix        = module.networking.alb_arn_suffix
+  source               = "../modules/monitoring"
+  env                  = var.env
+  aws_region           = var.aws_region
+  memory               = var.memory
+  cluster_name         = module.ecs.cluster_name
+  backend_service_name = module.ecs.backend_service_name
+  alb_arn_suffix       = module.networking.alb_arn_suffix
   backend_tg_arn_suffix = module.networking.backend_tg_arn_suffix
-  common_tags           = local.common_tags
+  common_tags          = local.common_tags
 }
 
 module "codedeploy" {
