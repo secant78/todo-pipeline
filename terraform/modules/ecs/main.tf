@@ -115,15 +115,17 @@ resource "aws_ecs_service" "backend" {
 
   deployment_controller { type = var.deployment_controller_type }
 
-  # ignore_changes=[task_definition]: the deploy step owns task definition
+  # ignore_changes=[task_definition]: the deploy step owns task-definition
   #   updates via update-service; Terraform managing it too would conflict.
-  # ignore_changes=[load_balancer]: CodeDeploy switches between blue/green TGs;
-  #   Terraform seeing that drift would fight it.
-  # replace_triggered_by=[terraform_data.backend_tg_trigger]: recreate the
-  #   service when the TG ARN itself changes so it never silently points at a
-  #   stale/deleted target group.
+  # load_balancer is intentionally NOT ignored: Terraform must be able to
+  #   detect and correct TG drift (e.g. service pointing at backend-green
+  #   instead of backend after a stale registration). CodeDeploy blue/green
+  #   (staging) will need ignore_changes=[load_balancer] re-added when that
+  #   environment is built; ECS rolling (dev) must NOT ignore it.
+  # replace_triggered_by: also recreate when the TG ARN itself changes
+  #   (e.g. TG deleted and recreated with a new AWS-assigned suffix).
   lifecycle {
-    ignore_changes       = [task_definition, load_balancer]
+    ignore_changes       = [task_definition]
     replace_triggered_by = [terraform_data.backend_tg_trigger]
   }
 
@@ -152,7 +154,7 @@ resource "aws_ecs_service" "frontend" {
   deployment_controller { type = var.deployment_controller_type }
 
   lifecycle {
-    ignore_changes       = [task_definition, load_balancer]
+    ignore_changes       = [task_definition]
     replace_triggered_by = [terraform_data.frontend_tg_trigger]
   }
 
