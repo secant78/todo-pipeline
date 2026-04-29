@@ -30,6 +30,21 @@ jobs:
       contents: read
       security-events: write
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: todo
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: todo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -44,6 +59,12 @@ jobs:
 
       - name: Backend tests
         working-directory: backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_NAME: todo
+          DB_USER: todo
+          DB_PASSWORD: testpassword
         run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
 
       - name: Snyk — Python dependency scan
@@ -78,7 +99,7 @@ jobs:
         run: npm run lint
 
       - name: Setup tflint
-        uses: terraform-linters/setup-tflint@v4.0.0
+        uses: terraform-linters/setup-tflint@19a52fbac37dacb22a09518e4ef6ee234f2d4987 # v4.0.0
         with:
           tflint_version: v0.54.0
 
@@ -93,7 +114,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
-          terraform_version: "1.8.0"
+          terraform_version: "1.11.0"
 
       - name: Terraform validate
         working-directory: terraform/stack
@@ -116,7 +137,7 @@ jobs:
           soft_fail: true
 
       - name: Trivy — Dockerfile misconfiguration scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: config
           scan-ref: .
@@ -203,7 +224,7 @@ jobs:
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
       - name: Trivy — scan backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.backend_image }}
           format: table
@@ -212,7 +233,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy — scan frontend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.frontend_image }}
           format: table
@@ -271,7 +292,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
-          terraform_version: "1.8.0"
+          terraform_version: "1.11.0"
 
       - name: Install Terragrunt
         run: |
@@ -281,6 +302,24 @@ jobs:
       - name: Terragrunt init
         working-directory: terraform/environments/prod
         run: terragrunt init --terragrunt-non-interactive
+
+      # Bootstrap: import manually-created todo-prod-github-actions so terraform
+      # apply does not fail with EntityAlreadyExists on first run.
+      - name: Import bootstrap IAM role (first-run only)
+        working-directory: terraform/environments/prod
+        run: |
+          if terragrunt state list 2>/dev/null \
+              | grep -q "module.iam.aws_iam_role.github_actions"; then
+            echo "✓ GitHub Actions role already in Terraform state — skipping import"
+          else
+            echo "Importing todo-prod-github-actions into Terraform state..."
+            terragrunt import \
+              -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
+              -var="backend_image_tag=$IMAGE_TAG" \
+              -var="frontend_image_tag=$IMAGE_TAG" \
+              module.iam.aws_iam_role.github_actions \
+              todo-prod-github-actions
+          fi
 
       - name: Terragrunt plan
         working-directory: terraform/environments/prod
@@ -304,12 +343,14 @@ jobs:
 
       # Prod deploys backend first, waits for it to be healthy, then deploys
       # frontend — reduces the window where old frontend talks to new API.
+      # Task definition ARNs are read from Terragrunt output — not from
+      # describe-task-definition — to guarantee we get the exact revision
+      # Terraform just registered (avoids inactive-revision errors).
       - name: Deploy backend via CodeDeploy
         id: codedeploy_backend
+        working-directory: terraform/environments/prod
         run: |
-          BACKEND_TD=$(aws ecs describe-task-definition \
-            --task-definition $BACKEND_SERVICE \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
+          BACKEND_TD=$(terragrunt output -raw backend_task_definition_arn)
           BACKEND_DEPLOY=$(python3 -c "
 import subprocess, json
 appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':'$BACKEND_TD','LoadBalancerInfo':{'ContainerName':'backend','ContainerPort':5000}}}}]}
@@ -319,17 +360,16 @@ print(r.stdout.strip())
 ")
           echo "backend_deploy_id=$BACKEND_DEPLOY" >> $GITHUB_OUTPUT
 
-      - name: Wait for backend
+      - name: Wait for backend CodeDeploy
         run: |
           aws deploy wait deployment-successful \
             --deployment-id ${{ steps.codedeploy_backend.outputs.backend_deploy_id }}
 
       - name: Deploy frontend via CodeDeploy
         id: codedeploy_frontend
+        working-directory: terraform/environments/prod
         run: |
-          FRONTEND_TD=$(aws ecs describe-task-definition \
-            --task-definition $FRONTEND_SERVICE \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
+          FRONTEND_TD=$(terragrunt output -raw frontend_task_definition_arn)
           FRONTEND_DEPLOY=$(python3 -c "
 import subprocess, json
 appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':'$FRONTEND_TD','LoadBalancerInfo':{'ContainerName':'frontend','ContainerPort':80}}}}]}
@@ -339,7 +379,7 @@ print(r.stdout.strip())
 ")
           echo "frontend_deploy_id=$FRONTEND_DEPLOY" >> $GITHUB_OUTPUT
 
-      - name: Wait for frontend
+      - name: Wait for frontend CodeDeploy
         run: |
           aws deploy wait deployment-successful \
             --deployment-id ${{ steps.codedeploy_frontend.outputs.frontend_deploy_id }}
