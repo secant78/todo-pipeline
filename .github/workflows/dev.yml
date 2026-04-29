@@ -222,13 +222,12 @@ jobs:
         run: terraform apply -auto-approve tfplan
 
       - name: Deploy to ECS (rolling update)
+        working-directory: terraform/stack
         run: |
-          BACKEND_TD=$(aws ecs list-task-definitions \
-            --family-prefix todo-dev-backend --status ACTIVE --sort DESC \
-            --query 'taskDefinitionArns[0]' --output text)
-          FRONTEND_TD=$(aws ecs list-task-definitions \
-            --family-prefix todo-dev-frontend --status ACTIVE --sort DESC \
-            --query 'taskDefinitionArns[0]' --output text)
+          # Read the exact ARNs Terraform just registered — avoids stale-revision
+          # errors that occur when querying list-task-definitions after a replace.
+          BACKEND_TD=$(terraform output -raw backend_task_definition_arn)
+          FRONTEND_TD=$(terraform output -raw frontend_task_definition_arn)
 
           aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE \
             --task-definition "$BACKEND_TD" --force-new-deployment
