@@ -232,6 +232,23 @@ jobs:
           terraform init -upgrade -reconfigure
           terraform workspace select staging 2>/dev/null || terraform workspace new staging
 
+      # Bootstrap: import the manually-created todo-staging-github-actions role so
+      # Terraform does not try to create it (which would fail with AlreadyExists).
+      # Safe to run on every deploy — if the resource is already in state the import
+      # is a no-op (exit 0). Once staging infra is fully bootstrapped this step costs
+      # ~1 s and does nothing.
+      - name: Import bootstrap IAM role (first-run only)
+        working-directory: terraform/stack
+        run: |
+          terraform import \
+            -var-file="../environments/staging/staging.tfvars" \
+            -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
+            -var="backend_image_tag=$IMAGE_TAG" \
+            -var="frontend_image_tag=$IMAGE_TAG" \
+            module.iam.aws_iam_role.github_actions \
+            todo-staging-github-actions 2>&1 \
+          | grep -v "^$" || true
+
       - name: Terraform plan
         working-directory: terraform/stack
         run: |
