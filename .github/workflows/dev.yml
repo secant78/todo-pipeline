@@ -272,16 +272,53 @@ jobs:
 
           curl --fail --retry 3 --retry-delay 5 http://$ALB_DNS/api/health
 
-      - name: Dump backend task logs on failure
+      - name: Dump diagnostics on failure
         if: failure()
         run: |
-          echo "=== Recent ECS task events ==="
+          echo "========================================================"
+          echo "=== ECS service summary (running/desired/pending) ==="
           aws ecs describe-services \
             --cluster $CLUSTER_NAME --services $BACKEND_SERVICE \
-            --query 'services[0].events[:10]' --output table || true
-          echo "=== Backend container logs (last 5 min) ==="
+            --query 'services[0].{Running:runningCount,Desired:desiredCount,Pending:pendingCount,Status:status}' \
+            --output table || true
+
+          echo "=== ECS service load balancer registration ==="
+          aws ecs describe-services \
+            --cluster $CLUSTER_NAME --services $BACKEND_SERVICE \
+            --query 'services[0].loadBalancers' --output json || true
+
+          echo "=== ECS service events (last 10) ==="
+          aws ecs describe-services \
+            --cluster $CLUSTER_NAME --services $BACKEND_SERVICE \
+            --query 'services[0].events[:10].[message]' --output text || true
+
+          echo "=== Most recent STOPPED task (stop reason) ==="
+          STOPPED=$(aws ecs list-tasks \
+            --cluster $CLUSTER_NAME --service-name $BACKEND_SERVICE \
+            --desired-status STOPPED --query 'taskArns[0]' --output text 2>/dev/null || true)
+          if [ -n "$STOPPED" ] && [ "$STOPPED" != "None" ]; then
+            aws ecs describe-tasks \
+              --cluster $CLUSTER_NAME --tasks "$STOPPED" \
+              --query 'tasks[0].{StopCode:stopCode,StopReason:stoppedReason,Containers:containers[*].{Name:name,Reason:reason,ExitCode:exitCode}}' \
+              --output json || true
+          else
+            echo "  (no stopped tasks found)"
+          fi
+
+          echo "=== ALB target group health (raw) ==="
+          BACKEND_TG=$(aws elbv2 describe-target-groups \
+            --names todo-dev-backend \
+            --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
+          echo "  Backend TG ARN: $BACKEND_TG"
+          if [ -n "$BACKEND_TG" ] && [ "$BACKEND_TG" != "None" ]; then
+            aws elbv2 describe-target-health \
+              --target-group-arn "$BACKEND_TG" --output json || true
+          fi
+
+          echo "=== Backend CloudWatch logs (last 10 min) ==="
           aws logs tail /ecs/todo-dev/backend \
-            --since 5m --region $AWS_REGION || true
+            --since 10m --region $AWS_REGION || echo "  (no log events — container never started)"
+          echo "========================================================"
 
       - name: Rollback on failure
         if: failure() && steps.save-task-defs.outputs.backend_td != ''

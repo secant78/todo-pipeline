@@ -82,6 +82,18 @@ resource "aws_ecs_task_definition" "frontend" {
   tags = var.common_tags
 }
 
+# Sentinel resources whose sole purpose is to trigger ECS service replacement
+# when the target group ARN changes (e.g. after a TG was deleted and recreated).
+# Without this, ignore_changes=[load_balancer] would let the service silently
+# keep routing to a stale/deleted TG ARN.
+resource "terraform_data" "backend_tg_trigger" {
+  input = var.backend_tg_arn
+}
+
+resource "terraform_data" "frontend_tg_trigger" {
+  input = var.frontend_tg_arn
+}
+
 resource "aws_ecs_service" "backend" {
   name            = "todo-${var.env}-backend"
   cluster         = aws_ecs_cluster.main.id
@@ -103,12 +115,16 @@ resource "aws_ecs_service" "backend" {
 
   deployment_controller { type = var.deployment_controller_type }
 
-  # When using CODE_DEPLOY: CodeDeploy owns task_definition and load_balancer
-  # (switches between blue/green TGs). Ignore both so Terraform doesn't fight it.
-  # When using ECS rolling: Terraform manages task_definition directly; only
-  # ignore load_balancer to avoid drift on the initial TG assignment.
+  # ignore_changes=[task_definition]: the deploy step owns task definition
+  #   updates via update-service; Terraform managing it too would conflict.
+  # ignore_changes=[load_balancer]: CodeDeploy switches between blue/green TGs;
+  #   Terraform seeing that drift would fight it.
+  # replace_triggered_by=[terraform_data.backend_tg_trigger]: recreate the
+  #   service when the TG ARN itself changes so it never silently points at a
+  #   stale/deleted target group.
   lifecycle {
-    ignore_changes = [task_definition, load_balancer]
+    ignore_changes       = [task_definition, load_balancer]
+    replace_triggered_by = [terraform_data.backend_tg_trigger]
   }
 
   tags = var.common_tags
@@ -136,7 +152,8 @@ resource "aws_ecs_service" "frontend" {
   deployment_controller { type = var.deployment_controller_type }
 
   lifecycle {
-    ignore_changes = [task_definition, load_balancer]
+    ignore_changes       = [task_definition, load_balancer]
+    replace_triggered_by = [terraform_data.frontend_tg_trigger]
   }
 
   tags = var.common_tags
