@@ -1,5 +1,6 @@
 env                    = "staging"
 aws_region             = "us-east-2"
+ecr_region             = "us-east-1"
 vpc_cidr               = "10.1.0.0/16"
 availability_zones     = ["us-east-2a", "us-east-2b"]
 cpu                    = 512
@@ -11,5 +12,6 @@ deployment_config_name = "CodeDeployDefault.ECSAllAtOnce"
 single_nat_gateway     = false
 rds_instance_class     = "db.t3.small"
 rds_allocated_storage  = 20
+use_codedeploy         = false
 
 # aws_account_id, backend_image_tag, frontend_image_tag injected at runtime via -var flags
