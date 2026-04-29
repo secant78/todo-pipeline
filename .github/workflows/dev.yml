@@ -226,21 +226,8 @@ jobs:
         working-directory: terraform/stack
         run: terraform apply -auto-approve tfplan
 
-      - name: Deploy via CodeDeploy
-        id: codedeploy
+      - name: Deploy to ECS (rolling update)
         run: |
-          _deploy() {
-            local dg=$1 td=$2 container=$3 port=$4
-            local content="{\"version\":0.0,\"Resources\":[{\"TargetService\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"$td\",\"LoadBalancerInfo\":{\"ContainerName\":\"$container\",\"ContainerPort\":$port}}}}]}"
-            local revision
-            revision=$(jq -n --arg c "$content" '{"revisionType":"AppSpecContent","appSpecContent":{"content":$c}}')
-            aws deploy create-deployment \
-              --application-name "todo-dev-$container" \
-              --deployment-group-name "$dg" \
-              --revision "$revision" \
-              --query 'deploymentId' --output text
-          }
-
           BACKEND_TD=$(aws ecs describe-task-definition \
             --task-definition todo-dev-backend \
             --query 'taskDefinition.taskDefinitionArn' --output text)
@@ -248,14 +235,13 @@ jobs:
             --task-definition todo-dev-frontend \
             --query 'taskDefinition.taskDefinitionArn' --output text)
 
-          BACKEND_DID=$(_deploy todo-dev-backend-dg  "$BACKEND_TD"  backend  5000)
-          FRONTEND_DID=$(_deploy todo-dev-frontend-dg "$FRONTEND_TD" frontend 80)
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE \
+            --task-definition "$BACKEND_TD" --force-new-deployment
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE \
+            --task-definition "$FRONTEND_TD" --force-new-deployment
 
-          echo "backend_did=$BACKEND_DID"   >> $GITHUB_OUTPUT
-          echo "frontend_did=$FRONTEND_DID" >> $GITHUB_OUTPUT
-
-          aws deploy wait deployment-successful --deployment-id "$BACKEND_DID"
-          aws deploy wait deployment-successful --deployment-id "$FRONTEND_DID"
+          aws ecs wait services-stable \
+            --cluster $CLUSTER_NAME --services $BACKEND_SERVICE $FRONTEND_SERVICE
 
       - name: Health check
         run: |
@@ -266,19 +252,10 @@ jobs:
       - name: Rollback on failure
         if: failure() && steps.save-task-defs.outputs.backend_td != ''
         run: |
-          _rollback() {
-            local dg=$1 td=$2 container=$3 port=$4
-            local content="{\"version\":0.0,\"Resources\":[{\"TargetService\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"$td\",\"LoadBalancerInfo\":{\"ContainerName\":\"$container\",\"ContainerPort\":$port}}}}]}"
-            local revision
-            revision=$(jq -n --arg c "$content" '{"revisionType":"AppSpecContent","appSpecContent":{"content":$c}}')
-            aws deploy create-deployment \
-              --application-name "todo-dev-$container" \
-              --deployment-group-name "$dg" \
-              --revision "$revision" \
-              --query 'deploymentId' --output text
-          }
-          _rollback todo-dev-backend-dg  "${{ steps.save-task-defs.outputs.backend_td }}"  backend  5000
-          _rollback todo-dev-frontend-dg "${{ steps.save-task-defs.outputs.frontend_td }}" frontend 80
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE \
+            --task-definition "${{ steps.save-task-defs.outputs.backend_td }}" --force-new-deployment
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE \
+            --task-definition "${{ steps.save-task-defs.outputs.frontend_td }}" --force-new-deployment
 
       - name: Log deployment result
         if: always()

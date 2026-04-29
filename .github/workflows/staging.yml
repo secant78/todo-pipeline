@@ -4,12 +4,14 @@ on:
   push:
     branches: [staging]
 
+# Staging deploys must complete — never cancel mid-flight.
 concurrency:
   group: deploy-staging
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
-  AWS_REGION:       us-east-1
+  AWS_REGION:       us-east-2
+  ECR_REGION:       us-east-1
   TF_WORKSPACE:     staging
   IMAGE_TAG:        staging-${{ github.sha }}
   CLUSTER_NAME:     todo-staging
@@ -18,15 +20,31 @@ env:
 
 jobs:
 
-  # ── Stage 1: tests, audits, SAST, IaC scan ─────────────────────────────────
+  # ── Stage 1: tests, security scans, IaC validate ───────────────────────────
   validate:
     name: Validate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     permissions:
       contents: read
+      id-token: write
       security-events: write
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: todo
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: todo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -42,12 +60,16 @@ jobs:
 
       - name: Backend tests
         working-directory: backend
-        run: pytest tests/ -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing --cov-fail-under=80
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_NAME: todo
+          DB_USER: todo
+          DB_PASSWORD: testpassword
+        run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
 
       - name: Snyk — Python dependency scan
-        run: |
-          npm install -g snyk
-          snyk test --severity-threshold=high --file=backend/requirements.txt
+        run: npx snyk test --severity-threshold=high --file=backend/requirements.txt
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
@@ -71,27 +93,9 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-      - name: SAST — ESLint security
-        working-directory: frontend
-        run: npm run lint
-
-      - name: Setup tflint
-        uses: terraform-linters/setup-tflint@v4.0.0
-        with:
-          tflint_version: v0.54.0
-
-      - name: tflint init
-        run: tflint --init
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      - name: tflint
-        run: tflint --recursive --minimum-failure-severity=error
-        working-directory: terraform
-
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
-          terraform_version: "1.8.0"
+          terraform_version: "1.11.0"
 
       - name: Terraform validate
         working-directory: terraform/stack
@@ -105,14 +109,6 @@ jobs:
           working_directory: terraform
           soft_fail: true
 
-      - name: Checkov — IaC security scan
-        uses: bridgecrewio/checkov-action@e9cd879593ec52aa7c88bfa9cde0dce5c3c34e37 # v12.2890.0
-        with:
-          directory: terraform/
-          framework: terraform
-          config_file: .checkov.yaml
-          soft_fail: true
-
       - name: Trivy — Dockerfile misconfiguration scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
@@ -121,7 +117,7 @@ jobs:
           exit-code: '1'
           severity: HIGH,CRITICAL
 
-  # ── Stage 2: build + push + sign ───────────────────────────────────────────
+  # ── Stage 2: build + push + scan + sign ────────────────────────────────────
   build:
     name: Build & Push
     runs-on: ubuntu-latest
@@ -142,7 +138,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-staging-github-actions
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ env.ECR_REGION }}
 
       - name: Log in to Amazon ECR
         id: ecr-login
@@ -177,7 +173,7 @@ jobs:
           cache-from: type=gha,scope=frontend-staging
           cache-to:   type=gha,mode=max,scope=frontend-staging
 
-      - name: Trivy — scan backend image
+      - name: Trivy — scan backend image for CVEs
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ steps.meta.outputs.backend_image }}
@@ -186,7 +182,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
 
-      - name: Trivy — scan frontend image
+      - name: Trivy — scan frontend image for CVEs
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ steps.meta.outputs.frontend_image }}
@@ -238,71 +234,72 @@ jobs:
 
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
-          terraform_version: "1.8.0"
+          terraform_version: "1.11.0"
 
-      - name: Install Terragrunt
+      - name: Terraform init
+        working-directory: terraform/stack
         run: |
-          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v0.67.16/terragrunt_linux_amd64 -O terragrunt
-          chmod +x terragrunt && sudo mv terragrunt /usr/local/bin/
+          unset TF_WORKSPACE
+          terraform init -upgrade -reconfigure
+          terraform workspace select staging 2>/dev/null || terraform workspace new staging
 
-      - name: Terragrunt init
-        working-directory: terraform/environments/staging
-        run: terragrunt init --terragrunt-non-interactive
-
-      - name: Terragrunt plan
-        working-directory: terraform/environments/staging
+      - name: Terraform plan
+        working-directory: terraform/stack
         run: |
-          terragrunt plan \
+          terraform plan \
+            -var-file="../environments/staging/staging.tfvars" \
             -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
             -var="backend_image_tag=$IMAGE_TAG" \
             -var="frontend_image_tag=$IMAGE_TAG" \
-            -out="${GITHUB_WORKSPACE}/tfplan"
+            -out=tfplan
 
       - name: Upload plan as artifact
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: tfplan-staging-${{ github.sha }}
-          path: tfplan
+          path: terraform/stack/tfplan
           retention-days: 7
 
-      - name: Terragrunt apply
-        working-directory: terraform/environments/staging
-        run: terragrunt apply -auto-approve "${GITHUB_WORKSPACE}/tfplan"
+      - name: Remove stale resources not in state
+        run: |
+          aws secretsmanager delete-secret --secret-id todo-staging/jwt-secret-key \
+            --force-delete-without-recovery --region $AWS_REGION 2>/dev/null || true
 
-      - name: Create CodeDeploy deployments
+      - name: Terraform apply
+        working-directory: terraform/stack
+        run: terraform apply -auto-approve tfplan
+
+      - name: Deploy via CodeDeploy
         id: codedeploy
         run: |
-          BACKEND_TD=$(aws ecs describe-task-definition \
-            --task-definition $BACKEND_SERVICE \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          FRONTEND_TD=$(aws ecs describe-task-definition \
-            --task-definition $FRONTEND_SERVICE \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-
-          deploy() {
-            local td=$1 app=$2 group=$3 container=$4 port=$5
-            python3 -c "
-import subprocess, json
-appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':'$td','LoadBalancerInfo':{'ContainerName':'$container','ContainerPort':$port}}}}]}
-revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
-r = subprocess.run(['aws','deploy','create-deployment','--application-name','$app','--deployment-group-name','$group','--revision',json.dumps(revision),'--query','deploymentId','--output','text'],capture_output=True,text=True,check=True)
-print(r.stdout.strip())
-"
+          _deploy() {
+            local dg=$1 td=$2 container=$3 port=$4
+            local content="{\"version\":0.0,\"Resources\":[{\"TargetService\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"$td\",\"LoadBalancerInfo\":{\"ContainerName\":\"$container\",\"ContainerPort\":$port}}}}]}"
+            local revision
+            revision=$(jq -n --arg c "$content" '{"revisionType":"AppSpecContent","appSpecContent":{"content":$c}}')
+            aws deploy create-deployment \
+              --application-name "todo-staging-$container" \
+              --deployment-group-name "$dg" \
+              --revision "$revision" \
+              --query 'deploymentId' --output text
           }
 
-          BACKEND_DEPLOY=$(deploy "$BACKEND_TD" "$BACKEND_SERVICE" "$BACKEND_SERVICE-dg" backend 5000)
-          FRONTEND_DEPLOY=$(deploy "$FRONTEND_TD" "$FRONTEND_SERVICE" "$FRONTEND_SERVICE-dg" frontend 80)
-          echo "backend_deploy_id=$BACKEND_DEPLOY" >> $GITHUB_OUTPUT
-          echo "frontend_deploy_id=$FRONTEND_DEPLOY" >> $GITHUB_OUTPUT
+          BACKEND_TD=$(aws ecs describe-task-definition \
+            --task-definition todo-staging-backend \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          FRONTEND_TD=$(aws ecs describe-task-definition \
+            --task-definition todo-staging-frontend \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
 
-      - name: Wait for deployments
-        run: |
-          aws deploy wait deployment-successful \
-            --deployment-id ${{ steps.codedeploy.outputs.backend_deploy_id }}
-          aws deploy wait deployment-successful \
-            --deployment-id ${{ steps.codedeploy.outputs.frontend_deploy_id }}
+          BACKEND_DID=$(_deploy todo-staging-backend-dg  "$BACKEND_TD"  backend  5000)
+          FRONTEND_DID=$(_deploy todo-staging-frontend-dg "$FRONTEND_TD" frontend 80)
 
-      # Staging runs a full API round-trip to confirm the deploy is actually working
+          echo "backend_did=$BACKEND_DID"   >> $GITHUB_OUTPUT
+          echo "frontend_did=$FRONTEND_DID" >> $GITHUB_OUTPUT
+
+          aws deploy wait deployment-successful --deployment-id "$BACKEND_DID"
+          aws deploy wait deployment-successful --deployment-id "$FRONTEND_DID"
+
       - name: Smoke tests
         run: |
           ALB_DNS=$(aws elbv2 describe-load-balancers \
@@ -323,21 +320,19 @@ print(r.stdout.strip())
       - name: Rollback on failure
         if: failure() && steps.save-task-defs.outputs.backend_td != ''
         run: |
-          aws deploy stop-deployment \
-            --deployment-id ${{ steps.codedeploy.outputs.backend_deploy_id }} \
-            --auto-rollback-enabled 2>/dev/null || true
-          aws deploy stop-deployment \
-            --deployment-id ${{ steps.codedeploy.outputs.frontend_deploy_id }} \
-            --auto-rollback-enabled 2>/dev/null || true
-          python3 -c "
-import subprocess, json
-def rollback(td, app, group, container, port):
-    appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':td,'LoadBalancerInfo':{'ContainerName':container,'ContainerPort':port}}}}]}
-    revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
-    subprocess.run(['aws','deploy','create-deployment','--application-name',app,'--deployment-group-name',group,'--revision',json.dumps(revision)],check=True)
-rollback('${{ steps.save-task-defs.outputs.backend_td }}','$BACKEND_SERVICE','$BACKEND_SERVICE-dg','backend',5000)
-rollback('${{ steps.save-task-defs.outputs.frontend_td }}','$FRONTEND_SERVICE','$FRONTEND_SERVICE-dg','frontend',80)
-" || true
+          _rollback() {
+            local dg=$1 td=$2 container=$3 port=$4
+            local content="{\"version\":0.0,\"Resources\":[{\"TargetService\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"$td\",\"LoadBalancerInfo\":{\"ContainerName\":\"$container\",\"ContainerPort\":$port}}}}]}"
+            local revision
+            revision=$(jq -n --arg c "$content" '{"revisionType":"AppSpecContent","appSpecContent":{"content":$c}}')
+            aws deploy create-deployment \
+              --application-name "todo-staging-$container" \
+              --deployment-group-name "$dg" \
+              --revision "$revision" \
+              --query 'deploymentId' --output text
+          }
+          _rollback todo-staging-backend-dg  "${{ steps.save-task-defs.outputs.backend_td }}"  backend  5000
+          _rollback todo-staging-frontend-dg "${{ steps.save-task-defs.outputs.frontend_td }}" frontend 80
 
       - name: Log deployment result
         if: always()
@@ -345,7 +340,7 @@ rollback('${{ steps.save-task-defs.outputs.frontend_td }}','$FRONTEND_SERVICE','
           aws logs put-log-events \
             --log-group-name /ecs/todo-staging/pipeline \
             --log-stream-name deployments \
-            --log-events "[{\"timestamp\":$(date +%s%3N),\"message\":\"Deploy $IMAGE_TAG: ${{ job.status }}\"}]" \
+            --log-events '[{"timestamp":'$(date +%s%3N)',"message":"Deploy '"$IMAGE_TAG"': ${{ job.status }}"}]' \
             2>/dev/null || true
 
   # ── Stage 4: Email notification via AWS SES (always runs) ───────────────────

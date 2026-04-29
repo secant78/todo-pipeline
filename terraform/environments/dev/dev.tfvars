@@ -12,5 +12,6 @@ deployment_config_name = "CodeDeployDefault.ECSAllAtOnce"
 single_nat_gateway     = true
 rds_instance_class     = "db.t3.micro"
 rds_allocated_storage  = 20
+use_codedeploy         = false
 
 # aws_account_id, backend_image_tag, frontend_image_tag injected at runtime via -var flags

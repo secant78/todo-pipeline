@@ -20,4 +20,8 @@ variable "db_port"              { type = string }
 variable "db_name"              { type = string }
 variable "db_user"              { type = string }
 variable "db_password_arn"      { type = string }
+variable "deployment_controller_type" {
+  type    = string
+  default = "CODE_DEPLOY"
+}
 variable "common_tags"          { type = map(string) }

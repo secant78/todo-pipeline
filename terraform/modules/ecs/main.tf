@@ -101,10 +101,12 @@ resource "aws_ecs_service" "backend" {
     container_port   = 5000
   }
 
-  deployment_controller { type = "CODE_DEPLOY" }
+  deployment_controller { type = var.deployment_controller_type }
 
-  # CodeDeploy owns the running task definition and which target group is active.
-  # Terraform manages task def registration and infrastructure; CodeDeploy manages rollout.
+  # When using CODE_DEPLOY: CodeDeploy owns task_definition and load_balancer
+  # (switches between blue/green TGs). Ignore both so Terraform doesn't fight it.
+  # When using ECS rolling: Terraform manages task_definition directly; only
+  # ignore load_balancer to avoid drift on the initial TG assignment.
   lifecycle {
     ignore_changes = [task_definition, load_balancer]
   }
@@ -131,7 +133,7 @@ resource "aws_ecs_service" "frontend" {
     container_port   = 80
   }
 
-  deployment_controller { type = "CODE_DEPLOY" }
+  deployment_controller { type = var.deployment_controller_type }
 
   lifecycle {
     ignore_changes = [task_definition, load_balancer]

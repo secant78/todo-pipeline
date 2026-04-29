@@ -26,3 +26,8 @@ variable "rds_allocated_storage" {
   type    = number
   default = 20
 }
+
+variable "use_codedeploy" {
+  type    = bool
+  default = true
+}

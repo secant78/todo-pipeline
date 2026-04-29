@@ -67,13 +67,14 @@ module "ecs" {
   frontend_sg_id     = module.networking.frontend_sg_id
   backend_tg_arn     = module.networking.backend_tg_arn
   frontend_tg_arn    = module.networking.frontend_tg_arn
-  jwt_secret_arn     = module.secrets.jwt_secret_arn
-  db_host            = module.rds.db_host
-  db_port            = module.rds.db_port
-  db_name            = module.rds.db_name
-  db_user            = module.rds.db_user
-  db_password_arn    = module.rds.db_password_arn
-  common_tags        = local.common_tags
+  jwt_secret_arn             = module.secrets.jwt_secret_arn
+  db_host                    = module.rds.db_host
+  db_port                    = module.rds.db_port
+  db_name                    = module.rds.db_name
+  db_user                    = module.rds.db_user
+  db_password_arn            = module.rds.db_password_arn
+  deployment_controller_type = var.use_codedeploy ? "CODE_DEPLOY" : "ECS"
+  common_tags                = local.common_tags
 
   depends_on = [module.secrets, module.rds]
 }
@@ -91,6 +92,7 @@ module "monitoring" {
 }
 
 module "codedeploy" {
+  count                  = var.use_codedeploy ? 1 : 0
   source                 = "../modules/codedeploy"
   env                    = var.env
   cluster_name           = module.ecs.cluster_name
