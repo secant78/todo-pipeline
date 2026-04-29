@@ -234,20 +234,25 @@ jobs:
 
       # Bootstrap: import the manually-created todo-staging-github-actions role so
       # Terraform does not try to create it (which would fail with AlreadyExists).
-      # Safe to run on every deploy — if the resource is already in state the import
-      # is a no-op (exit 0). Once staging infra is fully bootstrapped this step costs
-      # ~1 s and does nothing.
+      # Uses state list to detect whether the resource is already managed — if it
+      # is, the import is skipped entirely. If not, import runs and any real failure
+      # surfaces as a non-zero exit code (no error-swallowing pipes).
       - name: Import bootstrap IAM role (first-run only)
         working-directory: terraform/stack
         run: |
-          terraform import \
-            -var-file="../environments/staging/staging.tfvars" \
-            -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
-            -var="backend_image_tag=$IMAGE_TAG" \
-            -var="frontend_image_tag=$IMAGE_TAG" \
-            module.iam.aws_iam_role.github_actions \
-            todo-staging-github-actions 2>&1 \
-          | grep -v "^$" || true
+          if terraform state list 2>/dev/null \
+              | grep -q "module.iam.aws_iam_role.github_actions"; then
+            echo "✓ GitHub Actions role already in Terraform state — skipping import"
+          else
+            echo "Importing todo-staging-github-actions into Terraform state..."
+            terraform import \
+              -var-file="../environments/staging/staging.tfvars" \
+              -var="aws_account_id=${{ secrets.AWS_ACCOUNT_ID }}" \
+              -var="backend_image_tag=$IMAGE_TAG" \
+              -var="frontend_image_tag=$IMAGE_TAG" \
+              module.iam.aws_iam_role.github_actions \
+              todo-staging-github-actions
+          fi
 
       - name: Terraform plan
         working-directory: terraform/stack
