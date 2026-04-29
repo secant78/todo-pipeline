@@ -351,14 +351,18 @@ jobs:
         working-directory: terraform/environments/prod
         run: |
           BACKEND_TD=$(terragrunt output -raw backend_task_definition_arn)
-          BACKEND_DEPLOY=$(python3 -c "
-import subprocess, json
-appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':'$BACKEND_TD','LoadBalancerInfo':{'ContainerName':'backend','ContainerPort':5000}}}}]}
-revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
-r = subprocess.run(['aws','deploy','create-deployment','--application-name','$BACKEND_SERVICE','--deployment-group-name','$BACKEND_SERVICE-dg','--revision',json.dumps(revision),'--query','deploymentId','--output','text'],capture_output=True,text=True,check=True)
-print(r.stdout.strip())
-")
-          echo "backend_deploy_id=$BACKEND_DEPLOY" >> $GITHUB_OUTPUT
+          # Build the AppSpec JSON with jq — avoids embedded Python that
+          # triggers YAML parser errors on nested quotes/colons.
+          APPSPEC=$(jq -cn --arg td "$BACKEND_TD" \
+            '{version:1,Resources:[{TargetService:{Type:"AWS::ECS::Service",Properties:{TaskDefinition:$td,LoadBalancerInfo:{ContainerName:"backend",ContainerPort:5000}}}}]}')
+          REVISION=$(jq -cn --arg content "$APPSPEC" \
+            '{revisionType:"AppSpecContent",appSpecContent:{content:$content}}')
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name "$BACKEND_SERVICE" \
+            --deployment-group-name "${BACKEND_SERVICE}-dg" \
+            --revision "$REVISION" \
+            --query deploymentId --output text)
+          echo "backend_deploy_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
 
       - name: Wait for backend CodeDeploy
         run: |
@@ -370,14 +374,16 @@ print(r.stdout.strip())
         working-directory: terraform/environments/prod
         run: |
           FRONTEND_TD=$(terragrunt output -raw frontend_task_definition_arn)
-          FRONTEND_DEPLOY=$(python3 -c "
-import subprocess, json
-appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':'$FRONTEND_TD','LoadBalancerInfo':{'ContainerName':'frontend','ContainerPort':80}}}}]}
-revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
-r = subprocess.run(['aws','deploy','create-deployment','--application-name','$FRONTEND_SERVICE','--deployment-group-name','$FRONTEND_SERVICE-dg','--revision',json.dumps(revision),'--query','deploymentId','--output','text'],capture_output=True,text=True,check=True)
-print(r.stdout.strip())
-")
-          echo "frontend_deploy_id=$FRONTEND_DEPLOY" >> $GITHUB_OUTPUT
+          APPSPEC=$(jq -cn --arg td "$FRONTEND_TD" \
+            '{version:1,Resources:[{TargetService:{Type:"AWS::ECS::Service",Properties:{TaskDefinition:$td,LoadBalancerInfo:{ContainerName:"frontend",ContainerPort:80}}}}]}')
+          REVISION=$(jq -cn --arg content "$APPSPEC" \
+            '{revisionType:"AppSpecContent",appSpecContent:{content:$content}}')
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name "$FRONTEND_SERVICE" \
+            --deployment-group-name "${FRONTEND_SERVICE}-dg" \
+            --revision "$REVISION" \
+            --query deploymentId --output text)
+          echo "frontend_deploy_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
 
       - name: Wait for frontend CodeDeploy
         run: |
@@ -412,16 +418,24 @@ print(r.stdout.strip())
           aws deploy stop-deployment \
             --deployment-id ${{ steps.codedeploy_frontend.outputs.frontend_deploy_id }} \
             --auto-rollback-enabled 2>/dev/null || true
-          # If deployments already completed, create rollback deployments with previous task defs
-          python3 -c "
-import subprocess, json
-def rollback(td, app, group, container, port):
-    appspec = {'version':1,'Resources':[{'TargetService':{'Type':'AWS::ECS::Service','Properties':{'TaskDefinition':td,'LoadBalancerInfo':{'ContainerName':container,'ContainerPort':port}}}}]}
-    revision = {'revisionType':'AppSpecContent','appSpecContent':{'content':json.dumps(appspec)}}
-    subprocess.run(['aws','deploy','create-deployment','--application-name',app,'--deployment-group-name',group,'--revision',json.dumps(revision)],check=True)
-rollback('${{ steps.save-task-defs.outputs.backend_td }}','$BACKEND_SERVICE','$BACKEND_SERVICE-dg','backend',5000)
-rollback('${{ steps.save-task-defs.outputs.frontend_td }}','$FRONTEND_SERVICE','$FRONTEND_SERVICE-dg','frontend',80)
-" || true
+          # If deployments already completed, redeploy previous task definitions
+          _codedeploy_rollback() {
+            local td="$1" app="$2" group="$3" container="$4" port="$5"
+            local appspec revision
+            appspec=$(jq -cn --arg td "$td" --arg c "$container" --argjson p "$port" \
+              '{version:1,Resources:[{TargetService:{Type:"AWS::ECS::Service",Properties:{TaskDefinition:$td,LoadBalancerInfo:{ContainerName:$c,ContainerPort:$p}}}}]}')
+            revision=$(jq -cn --arg content "$appspec" \
+              '{revisionType:"AppSpecContent",appSpecContent:{content:$content}}')
+            aws deploy create-deployment \
+              --application-name "$app" --deployment-group-name "$group" \
+              --revision "$revision" || true
+          }
+          _codedeploy_rollback \
+            "${{ steps.save-task-defs.outputs.backend_td }}" \
+            "$BACKEND_SERVICE" "${BACKEND_SERVICE}-dg" "backend" 5000
+          _codedeploy_rollback \
+            "${{ steps.save-task-defs.outputs.frontend_td }}" \
+            "$FRONTEND_SERVICE" "${FRONTEND_SERVICE}-dg" "frontend" 80
 
       - name: Log deployment result
         if: always()
