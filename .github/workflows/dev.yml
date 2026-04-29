@@ -252,6 +252,12 @@ jobs:
 
           echo "Waiting for at least one healthy backend target..."
           for i in $(seq 1 24); do
+            # Print full target health so failures are visible in the log
+            aws elbv2 describe-target-health \
+              --target-group-arn "$BACKEND_TG" \
+              --query 'TargetHealthDescriptions[*].{IP:Target.Id,Port:Target.Port,State:TargetHealth.State,Reason:TargetHealth.Reason,Desc:TargetHealth.Description}' \
+              --output table 2>/dev/null || true
+
             HEALTHY=$(aws elbv2 describe-target-health \
               --target-group-arn "$BACKEND_TG" \
               --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' \

@@ -71,29 +71,39 @@ class Todo(db.Model):
 
 
 # Create tables on startup.
-# With PostgreSQL, the connection may not be immediately available
-# (RDS warming up, transient DNS, credential propagation), so retry
-# with exponential backoff before giving up and crashing.
+# Non-fatal: if the DB is unreachable we log the error and continue
+# so gunicorn starts and the ALB health check responds. DB-dependent
+# routes will 500 until connectivity is restored; /api/health always
+# returns 200 so the ALB target registers as healthy immediately.
+_db_ready = False
 with app.app_context():
     if not _db_host:
         os.makedirs(os.path.dirname(_db_path), exist_ok=True)
 
-    _max_attempts = 8
-    for _attempt in range(1, _max_attempts + 1):
+    for _attempt in range(1, 6):    # 5 attempts: 5 10 15 20 s waits
         try:
             db.create_all()
-            logger.info("Database ready (attempt %d/%d, %s)",
-                        _attempt, _max_attempts,
-                        "postgres" if _db_host else _db_path)
+            _db_ready = True
+            logger.info("Database ready (attempt %d/5, %s)",
+                        _attempt, "postgres" if _db_host else _db_path)
             break
         except Exception as _exc:
-            if _attempt == _max_attempts:
-                logger.error("Database unavailable after %d attempts: %s",
-                             _max_attempts, _exc)
-                raise
-            _delay = min(2 ** _attempt, 30)   # 2 4 8 16 30 30 30 s
-            logger.warning("DB not ready (attempt %d/%d): %s — retrying in %ds",
-                           _attempt, _max_attempts, _exc, _delay)
+            if _attempt == 5:
+                logger.error(
+                    "Database unreachable after 5 attempts: %s\n"
+                    "DB_HOST=%s DB_USER=%s DB_NAME=%s DB_PORT=%s\n"
+                    "Gunicorn will start anyway; DB routes will fail until "
+                    "connectivity is restored.",
+                    _exc,
+                    os.environ.get("DB_HOST", "(not set)"),
+                    os.environ.get("DB_USER", "(not set)"),
+                    os.environ.get("DB_NAME", "(not set)"),
+                    os.environ.get("DB_PORT", "(not set)"),
+                )
+                break   # ← don't raise; keep gunicorn alive for health checks
+            _delay = _attempt * 5   # 5 10 15 20 s
+            logger.warning("DB not ready (attempt %d/5): %s — retrying in %ds",
+                           _attempt, _exc, _delay)
             time.sleep(_delay)
 
 
@@ -101,7 +111,11 @@ with app.app_context():
 # ALB target group health check hits this endpoint before routing traffic.
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "healthy", "env": os.environ.get("APP_ENV", "unknown")})
+    return jsonify({
+        "status": "healthy",
+        "env": os.environ.get("APP_ENV", "unknown"),
+        "db": "ready" if _db_ready else "unavailable",
+    })
 
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
