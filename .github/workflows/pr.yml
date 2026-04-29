@@ -47,17 +47,12 @@ jobs:
             --cov-report=term-missing \
             --cov-fail-under=80
 
-      - name: Install backend dependencies for Snyk
-        working-directory: ${{ github.workspace }}
-        run: pip install -r backend/requirements.txt
-
       - name: Snyk — Python dependency scan
-        uses: snyk/actions/python-3.10@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+        run: |
+          npm install -g snyk
+          snyk test --severity-threshold=high --file=requirements.txt
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high --file=backend/requirements.txt
-        continue-on-error: false
 
       # ESLint security plugin still covers JS-adjacent patterns in any .py files
       # SonarQube handles the full SAST analysis below.
@@ -103,12 +98,9 @@ jobs:
       # Snyk for npm: detects vulns in transitive deps that npm audit misses,
       # and can open automatic fix PRs via the Snyk dashboard.
       - name: Snyk — npm dependency scan
-        uses: snyk/actions/node@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+        run: npx snyk test --severity-threshold=high --file=package.json
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high --file=frontend/package.json
-        continue-on-error: false
 
       # ESLint with security plugin (catches eval, injection patterns, etc.)
       - name: SAST — ESLint security
@@ -125,27 +117,41 @@ jobs:
             -Dsonar.sources=frontend/src
             -Dsonar.qualitygate.wait=true
 
-  # ── IaC: Terraform validate + tfsec + Checkov ──────────────────────────────
+  # ── IaC: tflint + Terraform validate + tfsec + Checkov ────────────────────
   iac:
-    name: IaC — validate / tfsec / Checkov
+    name: IaC — tflint / validate / tfsec / Checkov
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      # tflint catches deprecated resources, invalid attribute values, and naming
+      # convention violations before Terraform even runs.
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@v4.0.0
+        with:
+          tflint_version: v0.54.0
+
+      - name: tflint init
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: tflint
+        run: tflint --recursive --minimum-failure-severity=error
+        working-directory: terraform
+
       - uses: hashicorp/setup-terraform@651471c36a6092792c552e8b1bef71e592b462d8 # v3.1.1
         with:
           terraform_version: "1.8.0"
 
       - name: Terraform validate
-        working-directory: terraform
+        working-directory: terraform/stack
         run: |
           terraform init -backend=false
           terraform validate
 
-      # tfsec is fast and focused on Terraform-specific security issues.
-      # It catches things like public S3 buckets, unencrypted EBS, open SGs.
       - name: tfsec — Terraform security scan
         uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
         with:
@@ -161,14 +167,14 @@ jobs:
           sarif_file: tfsec.sarif
           category: tfsec
 
-      # Checkov complements tfsec with a broader rule set covering AWS best
-      # practices, CIS benchmarks, and supply-chain checks.
+      # Checkov is the hard gate on PRs — soft_fail is intentionally absent.
+      # Accepted-risk suppressions are documented in .checkov.yaml.
       - name: Checkov — IaC security scan
         uses: bridgecrewio/checkov-action@e9cd879593ec52aa7c88bfa9cde0dce5c3c34e37 # v12.2890.0
         with:
           directory: terraform/
           framework: terraform
-          soft_fail: true
+          config_file: .checkov.yaml
           output_format: sarif
           output_file_path: checkov.sarif
 
@@ -179,6 +185,25 @@ jobs:
           sarif_file: checkov.sarif
           category: checkov
 
+      # Trivy config scan catches Dockerfile misconfigurations (e.g. running as
+      # root, ADD vs COPY, missing USER instruction) before images are built.
+      - name: Trivy — Dockerfile misconfiguration scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-config.sarif
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@dd746615b3dff6e73b57f290f0b90f48c4cd69ad # v3.28.5
+        if: always()
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
       - name: Upload scan artifacts
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         if: always()
@@ -187,4 +212,5 @@ jobs:
           path: |
             tfsec.sarif
             checkov.sarif
+            trivy-config.sarif
           retention-days: 14

@@ -1,0 +1,27 @@
+# Checkov policy configuration.
+# Each suppression must include a justification; suppressions without one will be removed.
+# "soft-fail" is NOT set here — the PR gate enforces hard failure.
+
+skip-check:
+  # ALB HTTP listener without HTTPS redirect.
+  # HTTPS termination via ACM + Route 53 is a planned addition; HTTP is acceptable
+  # while the domain and certificate are not yet provisioned.
+  - CKV_AWS_2
+
+  # ALB access logs disabled.
+  # S3 access-log buckets incur storage cost in dev/staging. Access logging is
+  # enabled manually in the AWS Console for prod until the monitoring module
+  # adds a lifecycle-managed log bucket.
+  - CKV_AWS_91
+
+  # Lambda function without a dead-letter queue.
+  # The secret-rotator Lambda is triggered by Secrets Manager on a rotation
+  # schedule. Rotation failures are already surfaced via Secrets Manager events
+  # and CloudWatch alarms; a DLQ adds no additional signal.
+  - CKV_AWS_116
+
+  # Lambda code-signing policy.
+  # Container images are signed with Cosign (Sigstore) and verified at deploy
+  # time. Lambda-layer code signing is a separate, deferred control.
+  - CKV_AWS_50
+  - CKV_AWS_272

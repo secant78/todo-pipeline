@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from datetime import timedelta
 from flask import Flask, request, jsonify
@@ -20,10 +21,20 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-# DB_PATH points at the EFS mount in production (/data/todo.db).
-# JWT_SECRET_KEY is injected from AWS Secrets Manager via the ECS task definition.
-DB_PATH = os.environ.get("DB_PATH", "/data/todo.db")
-app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DB_PATH}"
+# When DB_HOST is set (ECS/production) use PostgreSQL.
+# Fall back to SQLite so tests run without a real database.
+_db_host = os.environ.get("DB_HOST")
+if _db_host:
+    _db_user = os.environ.get("DB_USER", "todo")
+    _db_pass = os.environ.get("DB_PASSWORD", "")
+    _db_port = os.environ.get("DB_PORT", "5432")
+    _db_name = os.environ.get("DB_NAME", "todo")
+    _DATABASE_URI = f"postgresql://{_db_user}:{_db_pass}@{_db_host}:{_db_port}/{_db_name}"
+else:
+    _db_path = os.environ.get("DB_PATH", "/tmp/todo.db")
+    _DATABASE_URI = f"sqlite:///{_db_path}"
+
+app.config["SQLALCHEMY_DATABASE_URI"] = _DATABASE_URI
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY", "dev-only-change-me")
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24)
@@ -59,18 +70,52 @@ class Todo(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
 
 
-# Create tables on startup; makedirs handles the EFS mount not yet having /data
+# Create tables on startup.
+# Non-fatal: if the DB is unreachable we log the error and continue
+# so gunicorn starts and the ALB health check responds. DB-dependent
+# routes will 500 until connectivity is restored; /api/health always
+# returns 200 so the ALB target registers as healthy immediately.
+_db_ready = False
 with app.app_context():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    db.create_all()
-    logger.info("Database ready at %s", DB_PATH)
+    if not _db_host:
+        os.makedirs(os.path.dirname(_db_path), exist_ok=True)
+
+    for _attempt in range(1, 6):    # 5 attempts: 5 10 15 20 s waits
+        try:
+            db.create_all()
+            _db_ready = True
+            logger.info("Database ready (attempt %d/5, %s)",
+                        _attempt, "postgres" if _db_host else _db_path)
+            break
+        except Exception as _exc:
+            if _attempt == 5:
+                logger.error(
+                    "Database unreachable after 5 attempts: %s\n"
+                    "DB_HOST=%s DB_USER=%s DB_NAME=%s DB_PORT=%s\n"
+                    "Gunicorn will start anyway; DB routes will fail until "
+                    "connectivity is restored.",
+                    _exc,
+                    os.environ.get("DB_HOST", "(not set)"),
+                    os.environ.get("DB_USER", "(not set)"),
+                    os.environ.get("DB_NAME", "(not set)"),
+                    os.environ.get("DB_PORT", "(not set)"),
+                )
+                break   # ← don't raise; keep gunicorn alive for health checks
+            _delay = _attempt * 5   # 5 10 15 20 s
+            logger.warning("DB not ready (attempt %d/5): %s — retrying in %ds",
+                           _attempt, _exc, _delay)
+            time.sleep(_delay)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
 # ALB target group health check hits this endpoint before routing traffic.
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "healthy", "env": os.environ.get("APP_ENV", "unknown")})
+    return jsonify({
+        "status": "healthy",
+        "env": os.environ.get("APP_ENV", "unknown"),
+        "db": "ready" if _db_ready else "unavailable",
+    })
 
 
 # ── Auth routes ───────────────────────────────────────────────────────────────

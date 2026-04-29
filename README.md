@@ -279,10 +279,20 @@ Triggers on push to `dev`. A new push cancels any in-progress run.
 validate → build → deploy → notify
 ```
 
-- **Validate** — same checks as PR (pytest, Snyk, npm test, ESLint, tflint, Terraform validate, tfsec, Checkov)
-- **Build** — authenticates to AWS via OIDC, pushes image tagged `dev-<sha>` to ECR, signs with Cosign
-- **Deploy** — Terraform plan/apply (workspace: dev), ECS force-new-deployment (no blue-green for speed), waits for stable, health checks `/api/health`; rolls back on failure
+- **Validate** — same checks as PR (pytest, Snyk, npm test, ESLint, tflint, Terraform validate, tfsec, Checkov, Trivy Dockerfile scan)
+- **Build** — authenticates to AWS via OIDC, pushes image tagged `dev-<sha>` to ECR, Trivy image scan, signs with Cosign
+- **Deploy** — Terraform plan/apply (workspace: dev), ECS force-new-deployment (no blue-green for speed), waits for stable, health check; rolls back on failure
 - **Notify** — sends deployment result email via SES
+
+#### Dev health check
+
+After the ECS service stabilizes, the workflow queries the ALB DNS and hits `/api/health` with retries:
+
+```bash
+curl --fail --retry 5 --retry-delay 10 http://$ALB_DNS/api/health
+```
+
+The backend returns `{"status": "ok"}` on success. Five retries with 10-second delays gives the ALB target registration time to complete before declaring failure.
 
 ### Staging (`staging.yml`)
 
@@ -290,8 +300,31 @@ Triggers on push to `staging`. Same structure as dev with these differences:
 
 - tflint runs at error level (no soft_fail)
 - Deployment uses Terragrunt and CodeDeploy blue-green (canary strategy)
-- Smoke tests run a full API round-trip: signup a test user, create a todo, verify the response
+- Full smoke test suite runs after deployment (see below)
 - Rollback stops in-progress CodeDeploy deployments (triggering built-in rollback) and creates a new deployment pointing to the previously saved task definitions if the deployment already completed
+
+#### Staging smoke tests
+
+After CodeDeploy finishes traffic shifting, the workflow runs a full API round-trip against the live ALB to confirm the entire stack is functional — not just that the container started:
+
+```bash
+# 1. Health check with retries
+curl --fail --retry 5 --retry-delay 10 http://$ALB_DNS/api/health
+
+# 2. Sign up a fresh test user (timestamp suffix prevents duplicate conflicts on retries)
+TOKEN=$(curl -sf -X POST http://$ALB_DNS/api/auth/signup \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"smoke_<timestamp>","email":"smoke_<timestamp>@test.com","password":"smokepass"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+# 3. Create a todo using the returned JWT
+curl --fail -X POST http://$ALB_DNS/api/todos \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"staging smoke test"}'
+```
+
+This exercises: ALB routing → backend service → JWT issuance → database write → authenticated request. If any layer is broken, the smoke test fails and the rollback step triggers. The timestamp-based username ensures the test is safe to re-run on retries or re-deployments of the same commit without hitting the unique constraint on username.
 
 ### Production (`prod.yml`)
 
@@ -303,14 +336,37 @@ validate → approve → build → deploy → notify
 
 - **Validate** — same as staging
 - **Approve** — pauses for a required reviewer to approve in the GitHub Actions UI (enforced via the `prod` GitHub Environment). 60-minute timeout.
-- **Build** — pushes images tagged `prod-<sha>` AND `latest`; verifies Cosign signature on the staging image (same SHA) before signing the prod tag — confirming the image was not tampered with between staging and prod
+- **Build** — pushes images tagged `prod-<sha>` AND `latest`; Trivy image scan; verifies Cosign signature on the staging image (same SHA) before signing the prod tag — confirming the image was not tampered with between staging and prod
 - **Deploy**:
   1. Terragrunt init/plan/apply
   2. CodeDeploy backend deployment — linear traffic shifting; wait for success
   3. CodeDeploy frontend deployment — starts only after backend is healthy (reduces the window where old frontend talks to new API)
-  4. Production smoke tests — health check, then full signup + create todo round-trip
+  4. Production smoke tests (see below)
   5. Rollback on failure — stops CodeDeploy deployments and creates rollback deployments with prior task definitions
 - **Notify** — sends production deployment result email via SES
+
+#### Production smoke tests
+
+Identical flow to staging but with a 15-second retry delay (giving the ALB more time under prod load) and scoped to the prod ALB:
+
+```bash
+# 1. Health check — 5 retries, 15-second delay
+curl --fail --retry 5 --retry-delay 15 http://$ALB_DNS/api/health
+
+# 2. Sign up a test user with timestamp suffix
+TOKEN=$(curl -sf -X POST http://$ALB_DNS/api/auth/signup \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"smoke_<timestamp>","email":"smoke_<timestamp>@prod.com","password":"smokepass"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+# 3. Create a todo
+curl --fail -X POST http://$ALB_DNS/api/todos \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"prod smoke test"}'
+```
+
+If the smoke test fails, the rollback step fires: any in-progress CodeDeploy deployment is stopped (which triggers CodeDeploy's built-in traffic revert), and a new deployment is created pointing to the task definition ARNs saved before the deploy job started.
 
 ### Drift Detection (`drift-detection.yml`)
 
