@@ -228,12 +228,12 @@ jobs:
 
       - name: Deploy to ECS (rolling update)
         run: |
-          BACKEND_TD=$(aws ecs describe-task-definition \
-            --task-definition todo-dev-backend \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          FRONTEND_TD=$(aws ecs describe-task-definition \
-            --task-definition todo-dev-frontend \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
+          BACKEND_TD=$(aws ecs list-task-definitions \
+            --family-prefix todo-dev-backend --status ACTIVE --sort DESC \
+            --query 'taskDefinitionArns[0]' --output text)
+          FRONTEND_TD=$(aws ecs list-task-definitions \
+            --family-prefix todo-dev-frontend --status ACTIVE --sort DESC \
+            --query 'taskDefinitionArns[0]' --output text)
 
           aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE \
             --task-definition "$BACKEND_TD" --force-new-deployment
