@@ -1,29 +1,43 @@
 import os
 import pytest
 
-# Tests run against a real PostgreSQL instance (provided by the GitHub Actions
-# service container, or a local Postgres when developing).
-# Required env vars: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
-# These must be set before any test file imports app, because app.py reads them
-# at module load time to configure SQLAlchemy.
-os.environ.setdefault("DB_HOST",     "localhost")
-os.environ.setdefault("DB_PORT",     "5432")
-os.environ.setdefault("DB_NAME",     "todo")
-os.environ.setdefault("DB_USER",     "todo")
-os.environ.setdefault("DB_PASSWORD", "testpassword")
+# Must be set before any test file imports app — app.py reads these at module
+# load time to configure SQLAlchemy.
+os.environ.setdefault("DB_HOST",        "localhost")
+os.environ.setdefault("DB_PORT",        "5432")
+os.environ.setdefault("DB_NAME",        "todo")
+os.environ.setdefault("DB_USER",        "todo")
+os.environ.setdefault("DB_PASSWORD",    "testpassword")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production")
-os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("APP_ENV",        "test")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _db():
+    """Create tables once for the whole test session, drop them at the end.
+    Avoids the PostgreSQL 'drop table while connections are open' hang that
+    occurs when drop_all() is called after every single test."""
+    from app import app, db
+    with app.app_context():
+        db.create_all()
+        yield db
+        db.session.remove()
+        db.engine.dispose()
+        db.drop_all()
 
 
 @pytest.fixture
-def client():
-    from app import app, db
-
+def client(_db):
+    from app import app
     app.config["TESTING"] = True
     with app.app_context():
-        db.create_all()
         yield app.test_client()
-        db.drop_all()
+        # Truncate all rows between tests — much faster than drop/recreate
+        # and avoids connection contention with the session-level pool.
+        _db.session.remove()
+        for table in reversed(_db.metadata.sorted_tables):
+            _db.session.execute(table.delete())
+        _db.session.commit()
 
 
 @pytest.fixture
