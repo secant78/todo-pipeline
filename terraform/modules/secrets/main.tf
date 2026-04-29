@@ -50,7 +50,10 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = aws_secretsmanager_secret.jwt_secret.arn
+      # Wildcard on the suffix so the policy survives secret deletion/recreation
+      # (AWS appends a random 6-char suffix to each secret ARN; deleting and
+      # recreating the secret with the same name produces a *new* suffix).
+      Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:todo-${var.env}/jwt-secret-key-*"
     }]
   })
 }
@@ -69,7 +72,7 @@ resource "aws_iam_role_policy" "secret_rotator_sm" {
         "secretsmanager:PutSecretValue",
         "secretsmanager:UpdateSecretVersionStage",
       ]
-      Resource = aws_secretsmanager_secret.jwt_secret.arn
+      Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:todo-${var.env}/jwt-secret-key-*"
     }]
   })
 }
