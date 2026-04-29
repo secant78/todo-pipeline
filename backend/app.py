@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from datetime import timedelta
 from flask import Flask, request, jsonify
@@ -69,12 +70,31 @@ class Todo(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
 
 
-# Create tables on startup
+# Create tables on startup.
+# With PostgreSQL, the connection may not be immediately available
+# (RDS warming up, transient DNS, credential propagation), so retry
+# with exponential backoff before giving up and crashing.
 with app.app_context():
     if not _db_host:
         os.makedirs(os.path.dirname(_db_path), exist_ok=True)
-    db.create_all()
-    logger.info("Database ready (%s)", "postgres" if _db_host else _db_path)
+
+    _max_attempts = 8
+    for _attempt in range(1, _max_attempts + 1):
+        try:
+            db.create_all()
+            logger.info("Database ready (attempt %d/%d, %s)",
+                        _attempt, _max_attempts,
+                        "postgres" if _db_host else _db_path)
+            break
+        except Exception as _exc:
+            if _attempt == _max_attempts:
+                logger.error("Database unavailable after %d attempts: %s",
+                             _max_attempts, _exc)
+                raise
+            _delay = min(2 ** _attempt, 30)   # 2 4 8 16 30 30 30 s
+            logger.warning("DB not ready (attempt %d/%d): %s — retrying in %ds",
+                           _attempt, _max_attempts, _exc, _delay)
+            time.sleep(_delay)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
