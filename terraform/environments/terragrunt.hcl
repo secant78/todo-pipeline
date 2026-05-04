@@ -24,8 +24,8 @@ remote_state {
     bucket         = "todo-pipeline-tfstate"
     key            = "todo-pipeline/environments/${local.env}/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "todo-pipeline-tflock"
-    encrypt        = true
+    use_lockfile = true
+    encrypt      = true
   }
 }
 
