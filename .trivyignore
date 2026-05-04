@@ -1,0 +1,6 @@
+# Fargate tasks (backend and frontend) require HTTPS egress to 0.0.0.0/0 so
+# they can reach AWS APIs (ECR image pull, Secrets Manager, CloudWatch Logs)
+# via the NAT gateway in the public subnet. The alternative — VPC interface
+# endpoints for each service — costs ~$7/month per endpoint and is deferred.
+# All other egress rules have been scoped to specific ports and the VPC CIDR.
+AVD-AWS-0104

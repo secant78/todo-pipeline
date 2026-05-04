@@ -4,7 +4,6 @@ output "private_subnet_ids"      { value = aws_subnet.private[*].id }
 output "alb_sg_id"               { value = aws_security_group.alb.id }
 output "backend_sg_id"           { value = aws_security_group.backend.id }
 output "frontend_sg_id"          { value = aws_security_group.frontend.id }
-output "efs_sg_id"               { value = aws_security_group.efs.id }
 output "alb_dns_name"            { value = aws_lb.main.dns_name }
 output "alb_arn_suffix"          { value = aws_lb.main.arn_suffix }
 output "backend_tg_arn"          { value = aws_lb_target_group.backend.arn }

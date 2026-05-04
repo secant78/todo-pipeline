@@ -46,12 +46,8 @@ resource "aws_security_group" "rds" {
     security_groups = [var.backend_sg_id]
   }
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  # No egress rule — RDS never initiates outbound connections.
+  # AWS RDS maintenance traffic uses internal AWS infrastructure, not this SG.
 
   tags = var.common_tags
 }

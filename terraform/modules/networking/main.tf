@@ -10,7 +10,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index)
   availability_zone       = var.availability_zones[count.index]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
   tags                    = merge(var.common_tags, { Name = "todo-${var.env}-public-${count.index}" })
 }
 
@@ -86,6 +86,7 @@ resource "aws_security_group" "alb" {
   description = "Allow public HTTP to the ALB"
   vpc_id      = aws_vpc.main.id
   ingress {
+    description = "HTTP from internet"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -94,16 +95,26 @@ resource "aws_security_group" "alb" {
   # Port 8080 is the CodeDeploy test listener — routes to green (new) tasks
   # before production traffic shifts, enabling smoke-test validation.
   ingress {
+    description = "CodeDeploy test listener from internet"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+  # ALB only needs to reach ECS tasks on their container ports (private subnets).
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "Forward to frontend tasks"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+  egress {
+    description = "Forward to backend tasks"
+    from_port   = 5000
+    to_port     = 5000
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
   }
   tags = merge(var.common_tags, { Name = "todo-${var.env}-alb-sg" })
 }
@@ -113,16 +124,28 @@ resource "aws_security_group" "backend" {
   description = "Allow traffic from the ALB to the backend task only"
   vpc_id      = aws_vpc.main.id
   ingress {
+    description     = "Flask from ALB"
     from_port       = 5000
     to_port         = 5000
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }
+  # HTTPS to 0.0.0.0/0 is required: Fargate pulls images from ECR and reads
+  # secrets from Secrets Manager via the NAT gateway. VPC endpoints would
+  # eliminate this but cost ~$7/month each; accepted for non-prod environments.
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "HTTPS to AWS APIs (ECR, Secrets Manager, CloudWatch) via NAT"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    description = "PostgreSQL to RDS (private subnet)"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
   }
   tags = merge(var.common_tags, { Name = "todo-${var.env}-backend-sg" })
 }
@@ -132,37 +155,22 @@ resource "aws_security_group" "frontend" {
   description = "Allow traffic from the ALB to the frontend task only"
   vpc_id      = aws_vpc.main.id
   ingress {
+    description     = "HTTP from ALB"
     from_port       = 80
     to_port         = 80
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }
+  # HTTPS egress required for Fargate to pull images from ECR and write
+  # logs to CloudWatch via the NAT gateway.
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "HTTPS to AWS APIs (ECR, CloudWatch) via NAT"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
   tags = merge(var.common_tags, { Name = "todo-${var.env}-frontend-sg" })
-}
-
-resource "aws_security_group" "efs" {
-  name        = "todo-${var.env}-efs"
-  description = "Allow NFS from the backend tasks only"
-  vpc_id      = aws_vpc.main.id
-  ingress {
-    from_port       = 2049
-    to_port         = 2049
-    protocol        = "tcp"
-    security_groups = [aws_security_group.backend.id]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  tags = merge(var.common_tags, { Name = "todo-${var.env}-efs-sg" })
 }
 
 # ── Application Load Balancer ─────────────────────────────────────────────────
