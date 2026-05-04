@@ -35,8 +35,9 @@ resource "aws_db_subnet_group" "main" {
 }
 
 resource "aws_security_group" "rds" {
-  name   = "todo-${var.env}-rds"
-  vpc_id = var.vpc_id
+  name        = "todo-${var.env}-rds"
+  description = "RDS PostgreSQL access from backend ECS tasks only"
+  vpc_id      = var.vpc_id
 
   ingress {
     description     = "PostgreSQL from backend tasks"
@@ -67,12 +68,14 @@ resource "aws_db_instance" "main" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
-  storage_encrypted       = true
-  publicly_accessible     = false
-  multi_az                = false
-  backup_retention_period = 0
-  skip_final_snapshot     = true
-  deletion_protection     = false
+  storage_encrypted            = true
+  publicly_accessible          = false
+  multi_az                     = false
+  backup_retention_period      = 0
+  skip_final_snapshot          = true
+  deletion_protection          = false
+  auto_minor_version_upgrade   = true
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
 
   tags = var.common_tags
 }

@@ -182,6 +182,7 @@ resource "aws_lb" "main" {
   security_groups            = [aws_security_group.alb.id]
   subnets                    = aws_subnet.public[*].id
   drop_invalid_header_fields = true
+  enable_deletion_protection = true
   tags                       = merge(var.common_tags, { Name = "todo-${var.env}-alb" })
 }
 

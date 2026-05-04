@@ -130,15 +130,15 @@ jobs:
           directory: terraform/
           framework: terraform
           output_format: cli
-          output_file_path: console,checkov-results.txt
-          soft_fail: false
+          output_file_path: "."    # checkov writes results_cli.txt in this dir
+          soft_fail: true          # summary-only in staging; PR gate enforces hard fail
 
       - name: Checkov scan — write job summary
         if: always()
         run: |
           echo "## 🛡️ Checkov Terraform IaC Scan" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat checkov-results.txt >> $GITHUB_STEP_SUMMARY
+          cat results_cli.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
   # ── Stage 2: build + CVE scan + sign ───────────────────────────────────────
