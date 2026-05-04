@@ -19,6 +19,11 @@ RUN npm run build
 # ── Runtime stage: serve the build with nginx ─────────────────────────────────
 FROM nginx:1.30.0-alpine
 
+# Patch OS-level CVEs that post-date the base image release (e.g. CVE-2026-27135
+# in nghttp2-libs). Pinned base image + targeted upgrade keeps builds reproducible
+# while pulling in available security fixes.
+RUN apk upgrade --no-cache
+
 COPY --from=builder /app/build /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
