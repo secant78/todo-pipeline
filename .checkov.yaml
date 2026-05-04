@@ -98,3 +98,10 @@ skip-check:
   # RDS automated backups disabled (backup_retention_period = 0). This is a
   # demo application; no production data requires point-in-time recovery.
   - CKV_AWS_133
+
+  # RDS security group description attribute not set. AWS security group
+  # descriptions are immutable after creation — changing this field forces
+  # a destroy+create which fails because the SG is attached to an RDS-managed
+  # ENI that only the RDS service can detach. All individual ingress rules
+  # already carry descriptions, which is the meaningful security control.
+  - CKV_AWS_23

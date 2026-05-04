@@ -35,9 +35,8 @@ resource "aws_db_subnet_group" "main" {
 }
 
 resource "aws_security_group" "rds" {
-  name        = "todo-${var.env}-rds"
-  description = "RDS PostgreSQL access from backend ECS tasks only"
-  vpc_id      = var.vpc_id
+  name   = "todo-${var.env}-rds"
+  vpc_id = var.vpc_id
 
   ingress {
     description     = "PostgreSQL from backend tasks"
