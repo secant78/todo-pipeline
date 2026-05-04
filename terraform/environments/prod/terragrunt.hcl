@@ -3,7 +3,11 @@ include "root" {
 }
 
 terraform {
-  source = "../../stack"
+  # The // tells Terragrunt to copy the entire terraform/ directory into the
+  # cache (not just stack/) so that relative module paths like ../modules/iam
+  # resolve correctly. Without //, only terraform/stack/ is copied and all
+  # module symlinks break with "lstat ../modules: no such file or directory".
+  source = "../..//stack"
 }
 
 inputs = {
