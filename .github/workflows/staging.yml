@@ -105,6 +105,42 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         continue-on-error: true
 
+      - name: Trivy — IaC config scan
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          skip-dirs: frontend/node_modules,backend/node_modules
+          output: trivy-config-results.txt
+          format: table
+
+      - name: Trivy config scan — write job summary
+        if: always()
+        run: |
+          echo "## 🔍 Trivy IaC & Dockerfile Config Scan" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat trivy-config-results.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Checkov — Terraform IaC scan
+        uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: cli
+          output_file_path: console,checkov-results.txt
+          soft_fail: false
+
+      - name: Checkov scan — write job summary
+        if: always()
+        run: |
+          echo "## 🛡️ Checkov Terraform IaC Scan" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat checkov-results.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
   # ── Stage 2: build + CVE scan + sign ───────────────────────────────────────
   build:
     name: Build & Push
@@ -170,6 +206,7 @@ jobs:
           exit-code: '0'          # advisory until baseline is clean; set to '1' to block
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          output: trivy-backend-image.txt
 
       - name: Trivy — scan frontend image
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
@@ -179,6 +216,20 @@ jobs:
           exit-code: '0'
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          output: trivy-frontend-image.txt
+
+      - name: Trivy image scans — write job summary
+        if: always()
+        run: |
+          echo "## 🐳 Trivy Container Image CVE Scan" >> $GITHUB_STEP_SUMMARY
+          echo "### Backend image" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat trivy-backend-image.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "### Frontend image" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat trivy-frontend-image.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
