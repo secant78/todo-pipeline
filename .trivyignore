@@ -14,3 +14,15 @@ AVD-AWS-0054
 # The ALB is intentionally public-facing — it serves end-user traffic from the
 # internet. Setting internal=false is correct and expected for this workload.
 AVD-AWS-0053
+
+# nginx must run as root to bind to port 80 — the master process needs the
+# privileged port, and worker processes already drop to the nginx user
+# internally. Switching to an unprivileged port (8080) would require updating
+# the ALB target groups, security groups, and task definitions throughout the
+# stack; deferred until a rootless nginx migration is planned.
+DS-0002 frontend/Dockerfile
+
+# SNS topic is encrypted with the AWS-managed key (alias/aws/sns).
+# A customer-managed KMS key (CMK) would satisfy this check but costs $1/month
+# per key; acceptable risk for non-production alert topics, deferred for prod.
+AVD-AWS-0136
