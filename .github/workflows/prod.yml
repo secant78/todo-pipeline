@@ -143,6 +143,7 @@ jobs:
           scan-ref: .
           exit-code: '1'
           severity: HIGH,CRITICAL
+          skip-dirs: frontend/node_modules,backend/node_modules
 
   # ── Stage 2: manual approval gate (configured in GitHub Environments) ───────
   # A required reviewer must approve in the GitHub Actions UI before build runs.

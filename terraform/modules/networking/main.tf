@@ -176,12 +176,13 @@ resource "aws_security_group" "frontend" {
 # ── Application Load Balancer ─────────────────────────────────────────────────
 
 resource "aws_lb" "main" {
-  name               = "todo-${var.env}"
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb.id]
-  subnets            = aws_subnet.public[*].id
-  tags               = merge(var.common_tags, { Name = "todo-${var.env}-alb" })
+  name                       = "todo-${var.env}"
+  internal                   = false
+  load_balancer_type         = "application"
+  security_groups            = [aws_security_group.alb.id]
+  subnets                    = aws_subnet.public[*].id
+  drop_invalid_header_fields = true
+  tags                       = merge(var.common_tags, { Name = "todo-${var.env}-alb" })
 }
 
 resource "aws_lb_target_group" "backend" {

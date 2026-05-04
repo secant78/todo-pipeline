@@ -196,6 +196,7 @@ jobs:
           output: trivy-config.sarif
           exit-code: '1'
           severity: HIGH,CRITICAL
+          skip-dirs: frontend/node_modules,backend/node_modules
 
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@dd746615b3dff6e73b57f290f0b90f48c4cd69ad # v3.28.5

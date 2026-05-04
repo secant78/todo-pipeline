@@ -10,3 +10,7 @@ AVD-AWS-0104
 # while the domain and certificate are not yet provisioned.
 # Suppressed as CKV_AWS_2 in .checkov.yaml for the same reason.
 AVD-AWS-0054
+
+# The ALB is intentionally public-facing — it serves end-user traffic from the
+# internet. Setting internal=false is correct and expected for this workload.
+AVD-AWS-0053

@@ -11,8 +11,9 @@ resource "aws_cloudwatch_log_group" "frontend" {
 }
 
 resource "aws_sns_topic" "alerts" {
-  name = "todo-${var.env}-alerts"
-  tags = var.common_tags
+  name              = "todo-${var.env}-alerts"
+  kms_master_key_id = "alias/aws/sns" # AWS-managed key; no extra cost
+  tags              = var.common_tags
 }
 
 resource "aws_cloudwatch_metric_alarm" "backend_cpu_high" {
