@@ -18,6 +18,24 @@ resource "aws_iam_role_policy_attachment" "codedeploy" {
   policy_arn = "arn:aws:iam::aws:policy/AWSCodeDeployRoleForECS"
 }
 
+# ── Deployment configuration ─────────────────────────────────────────────────
+# AWS pre-defined ECS deployment configs (CodeDeployDefault.ECSLinear*) may not
+# exist in accounts that have never used CodeDeploy. Create our own so it is
+# always guaranteed to be present.
+
+resource "aws_codedeploy_deployment_config" "ecs" {
+  deployment_config_name = "todo-${var.env}-ecs-linear-10pct-1min"
+  compute_platform       = "ECS"
+
+  traffic_routing_config {
+    type = "TimeBasedLinear"
+    time_based_linear {
+      interval   = 1   # shift another 10 % every 1 minute
+      percentage = 10
+    }
+  }
+}
+
 # ── Backend ───────────────────────────────────────────────────────────────────
 
 resource "aws_codedeploy_app" "backend" {
@@ -29,7 +47,7 @@ resource "aws_codedeploy_deployment_group" "backend" {
   app_name               = aws_codedeploy_app.backend.name
   deployment_group_name  = "todo-${var.env}-backend-dg"
   service_role_arn       = aws_iam_role.codedeploy.arn
-  deployment_config_name = var.deployment_config_name
+  deployment_config_name = aws_codedeploy_deployment_config.ecs.id
 
   auto_rollback_configuration {
     enabled = true
@@ -86,7 +104,7 @@ resource "aws_codedeploy_deployment_group" "frontend" {
   app_name               = aws_codedeploy_app.frontend.name
   deployment_group_name  = "todo-${var.env}-frontend-dg"
   service_role_arn       = aws_iam_role.codedeploy.arn
-  deployment_config_name = var.deployment_config_name
+  deployment_config_name = aws_codedeploy_deployment_config.ecs.id
 
   auto_rollback_configuration {
     enabled = true
