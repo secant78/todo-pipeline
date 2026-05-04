@@ -137,9 +137,16 @@ jobs:
         if: always()
         run: |
           echo "## 🛡️ Checkov Terraform IaC Scan" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat results_cli.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          if [ -f results_cli.txt ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat results_cli.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat "$GITHUB_WORKSPACE/results_cli.txt" >> $GITHUB_STEP_SUMMARY 2>/dev/null \
+              || echo "Checkov output captured in step logs above (results_cli.txt not written by action)." >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
 
   # ── Stage 2: build + CVE scan + sign ───────────────────────────────────────
   build:
