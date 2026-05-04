@@ -4,3 +4,9 @@
 # endpoints for each service — costs ~$7/month per endpoint and is deferred.
 # All other egress rules have been scoped to specific ports and the VPC CIDR.
 AVD-AWS-0104
+
+# ALB listeners use HTTP (port 80 production, port 8080 CodeDeploy test listener).
+# HTTPS termination via ACM + Route 53 is a planned addition; HTTP is acceptable
+# while the domain and certificate are not yet provisioned.
+# Suppressed as CKV_AWS_2 in .checkov.yaml for the same reason.
+AVD-AWS-0054
