@@ -260,6 +260,13 @@ resource "aws_lb_listener" "http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.frontend.arn
   }
+  # CodeDeploy rewrites default_action after each blue/green deployment to point
+  # at the new (green) TG as the live primary. Terraform must not reset it back
+  # to the original blue TG or subsequent deployments will fail with:
+  # "Primary taskset target group must be behind listener".
+  lifecycle {
+    ignore_changes = [default_action]
+  }
 }
 
 resource "aws_lb_listener_rule" "api" {
@@ -271,6 +278,11 @@ resource "aws_lb_listener_rule" "api" {
   action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.backend.arn
+  }
+  # Same reason as aws_lb_listener.http — CodeDeploy updates this rule's action
+  # to point at the green backend TG after a successful deployment.
+  lifecycle {
+    ignore_changes = [action]
   }
 }
 
@@ -284,6 +296,11 @@ resource "aws_lb_listener" "test" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.frontend_green.arn
   }
+  # CodeDeploy manages this test-listener target group during traffic shifting.
+  # Ignore drift so Terraform does not interfere with in-progress deployments.
+  lifecycle {
+    ignore_changes = [default_action]
+  }
 }
 
 resource "aws_lb_listener_rule" "api_test" {
@@ -295,5 +312,10 @@ resource "aws_lb_listener_rule" "api_test" {
   action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.backend_green.arn
+  }
+  # Same reason as aws_lb_listener.test — CodeDeploy updates this rule's action
+  # during blue/green traffic shifting.
+  lifecycle {
+    ignore_changes = [action]
   }
 }
