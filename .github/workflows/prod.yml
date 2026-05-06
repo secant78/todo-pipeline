@@ -3,6 +3,7 @@ name: Deploy — Production
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 # Only one prod deployment at a time; never cancel in progress — let it finish
 # or fail, then rollback.
